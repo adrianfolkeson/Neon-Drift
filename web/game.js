@@ -94,10 +94,11 @@ const TRAILS = [
 let state = 'menu'
 
 // ── Pseudo-3D engine constants ────────────────────────────────
-const NUM_SEGS       = 120
-const ROAD_W         = 0.58
-const HORIZON_Y_RATIO = 0.32
+const NUM_SEGS          = 120
+const ROAD_W            = 0.58
+const HORIZON_Y_RATIO   = 0.32
 const ROAD_HALF_W_WORLD = 1.0
+const CAMERA_DIST       = 22   // camera is this many segments BEHIND the car
 
 function getHorizonY() { return H * HORIZON_Y_RATIO }
 
@@ -129,7 +130,8 @@ let game = {}
 
 function initGame() {
   game = {
-    cameraZ:       0,
+    carZ:          CAMERA_DIST,   // car's world Z position
+    cameraZ:       0,             // camera = carZ - CAMERA_DIST
     segOffset:     0,
     playerX:       0,
     playerVX:      0,
@@ -291,8 +293,8 @@ function checkSpeedPads() {
   const roadHW = (W * ROAD_W) / 2
   for (const pad of game.speedPads) {
     if (pad.used) continue
-    const relZ = pad.wz - game.cameraZ
-    if (relZ > 3 || relZ < 0) continue
+    const relZ = Math.abs(pad.wz - game.carZ)
+    if (relZ > 3) continue
 
     // Check if car is over pad
     const dx = Math.abs(game.playerX - pad.wx)
@@ -313,8 +315,9 @@ function checkSpeedPads() {
 // ── Collision detection ───────────────────────────────────────
 function checkCollisions() {
   for (const o of game.obstacles) {
-    const relZ = o.wz - game.cameraZ
-    if (relZ < 0 || relZ > 3) continue
+    // Collide when obstacle is at the car's world Z (not camera Z)
+    const relZ = Math.abs(o.wz - game.carZ)
+    if (relZ > 3) continue
 
     const playerRelX = game.playerX
     const dx = Math.abs(playerRelX - o.wx)
@@ -499,7 +502,8 @@ function update(dt) {
   })
 
   const scrollSpeed = 15 * game.speedMult
-  game.cameraZ  += scrollSpeed * dt
+  game.carZ    += scrollSpeed * dt          // car moves forward through world
+  game.cameraZ  = game.carZ - CAMERA_DIST  // camera follows behind
   game.segOffset = game.cameraZ % 1  // scrolling ground shows movement
   game.distance  = game.cameraZ * 10
 
@@ -525,9 +529,10 @@ function update(dt) {
     game.coins += 5 * dt
     game.wallRiding = true
     if (save.settings.particles && Math.random() > 0.7) {
-      const near = segScreen(NUM_SEGS - 1)
+      const carIdx2 = Math.min(NUM_SEGS-1,Math.max(0,Math.round(NUM_SEGS-1-CAMERA_DIST)))
+      const near = segScreen(carIdx2)
       const px   = W/2 + game.playerX * near.halfW / ROAD_HALF_W_WORLD
-      const py   = near.y - near.halfW * 0.22
+      const py   = near.y
       game.wallParticles.push({
         x: px, y: py,
         color: C.MAGENTA,
@@ -814,11 +819,15 @@ function drawObstacle(o) {
 
 // ── DRAW PLAYER (neon car) ────────────────────────────────────
 function drawPlayer() {
-  const near = segScreen(NUM_SEGS - 1)
-  const px   = W/2 + game.playerX * near.halfW / ROAD_HALF_W_WORLD
-  const py   = near.y + game.bobOffset   // subtle road-bump bob
-  const cw   = near.halfW * 0.17
-  const ch   = near.halfW * 0.14
+  // Car is at world Z = game.carZ, camera is at game.cameraZ
+  // relZ from camera to car = CAMERA_DIST → project to screen
+  const carRelZ  = Math.max(1, game.carZ - game.cameraZ)  // should equal CAMERA_DIST
+  const carSegIdx = Math.min(NUM_SEGS - 1, Math.max(0, Math.round(NUM_SEGS - 1 - carRelZ)))
+  const carSeg   = segScreen(carSegIdx)
+  const px   = W/2 + game.playerX * carSeg.halfW / ROAD_HALF_W_WORLD
+  const py   = carSeg.y + game.bobOffset
+  const cw   = carSeg.halfW * 0.32   // size relative to road width at car's screen position
+  const ch   = carSeg.halfW * 0.26
 
   const skin  = SKINS.find(s => s.id === save.activeSkin) || SKINS[0]
   const TRIM  = skin.color === 'rainbow' ? `hsl(${Date.now()/6%360},100%,60%)` : skin.color
