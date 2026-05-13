@@ -475,13 +475,13 @@ function drawSpeedPads() {
 
 // ─── Obstacles ───────────────────────────────────────────────────────────────
 const OCOL = {
-  block:    {s:'#FF0044', f:'rgba(255,0,68,0.2)',    top:'rgba(255,60,80,0.32)'},
-  moving:   {s:'#FFFF00', f:'rgba(255,255,0,0.15)',  top:'rgba(255,255,80,0.25)'},
-  shrinking:{s:'#00FF88', f:'rgba(0,255,136,0.15)',  top:'rgba(80,255,160,0.25)'},
-  ghost:    {s:'#AA44FF', f:'rgba(170,68,255,0.08)', top:'rgba(180,100,255,0.12)'},
-  rotating: {s:'#FF00FF', f:'rgba(255,0,255,0.15)',  top:'rgba(255,80,255,0.25)'},
-  wall_l:   {s:'#FF6600', f:'rgba(255,102,0,0.18)',  top:'rgba(255,150,50,0.28)'},
-  wall_r:   {s:'#FF6600', f:'rgba(255,102,0,0.18)',  top:'rgba(255,150,50,0.28)'},
+  block:    {s:'#FF0044', f:'rgba(255,0,68,0.65)',    top:'rgba(255,100,120,0.85)', hi:'#FF4466'},
+  moving:   {s:'#FFFF00', f:'rgba(200,200,0,0.65)',   top:'rgba(255,255,100,0.85)', hi:'#FFFF44'},
+  shrinking:{s:'#00FF88', f:'rgba(0,200,100,0.65)',   top:'rgba(80,255,160,0.85)',  hi:'#44FFAA'},
+  ghost:    {s:'#CC88FF', f:'rgba(140,60,220,0.50)',  top:'rgba(200,140,255,0.65)', hi:'#DD99FF'},
+  rotating: {s:'#FF00FF', f:'rgba(200,0,200,0.65)',   top:'rgba(255,80,255,0.85)',  hi:'#FF44FF'},
+  wall_l:   {s:'#FF8800', f:'rgba(200,80,0,0.65)',    top:'rgba(255,160,60,0.85)',  hi:'#FFAA44'},
+  wall_r:   {s:'#FF8800', f:'rgba(200,80,0,0.65)',    top:'rgba(255,160,60,0.85)',  hi:'#FFAA44'},
 }
 
 function projectObstacle(o) {
@@ -499,13 +499,14 @@ function drawObstacle(o) {
   const p = projectObstacle(o)
   if (!p || p.s.t<0.02) return
   const col   = OCOL[o.type] || OCOL.block
-  const alpha = Math.min(1, p.s.t*(o.opacity||1))
-  const pulse = 0.85+0.15*Math.sin(game.time*4+o.wz*0.5)
+  // No distance fade — full visibility at all times
+  const alpha = o.type==='ghost' ? 0.60 : 1.0
+  const pulse = 0.90+0.10*Math.sin(game.time*4+o.wz*0.5)
 
   ctx.save()
   ctx.globalAlpha = alpha*pulse
-  ctx.shadowColor = col.s; ctx.shadowBlur = 18*p.s.t
-  ctx.lineWidth   = Math.max(1, p.s.t*2.5)
+  ctx.shadowColor = col.s; ctx.shadowBlur = 36   // strong fixed glow
+  ctx.lineWidth   = 2.5
 
   const topH=p.h*0.35, shr=0.80
   const fL=p.x, fR=p.x+p.w
@@ -535,9 +536,13 @@ function drawObstacle(o) {
       }
     }
   }
-  ctx.globalAlpha=alpha*0.5; ctx.lineWidth=1
+  // Bright edge highlights for depth
+  ctx.globalAlpha=alpha*0.6; ctx.lineWidth=1.5; ctx.strokeStyle=col.hi; ctx.shadowBlur=8
   ctx.beginPath(); ctx.moveTo(bL,bY); ctx.lineTo(p.x,p.y); ctx.lineTo(p.x,p.y+p.h); ctx.stroke()
   ctx.beginPath(); ctx.moveTo(bR,bY); ctx.lineTo(p.x+p.w,p.y); ctx.lineTo(p.x+p.w,p.y+p.h); ctx.stroke()
+  // Top highlight line (brightest edge)
+  ctx.globalAlpha=alpha*0.9; ctx.lineWidth=2; ctx.strokeStyle=col.hi; ctx.shadowBlur=14
+  ctx.beginPath(); ctx.moveTo(bL,bY); ctx.lineTo(bR,bY); ctx.stroke()
   ctx.restore()
 }
 
