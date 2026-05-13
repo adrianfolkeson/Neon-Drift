@@ -162,6 +162,7 @@ function initGame() {
     nameInput:     save.playerName || '',
     newRecord:     false,
     speedBoostTimer: 0,
+    bonusSpeed:      0,    // permanent bonus from speed pads
     wheelAngle:      0,     // spinning wheels
     bobOffset:       0,     // subtle vertical road-bump bob
   }
@@ -297,10 +298,10 @@ function checkSpeedPads() {
     const dx = Math.abs(game.playerX - pad.wx)
     if (dx < 0.30) {
       pad.used = true
-      // Speed boost: push speedMult up temporarily
-      game.speedBoostTimer = 4.0  // seconds
+      // Permanent speed boost +0.4 (equivalent to 4 seconds of normal acceleration)
+      game.bonusSpeed += 0.4
       game.score += 100
-      addScorePopup('SPEED BOOST! +100', '#00FF88')
+      addScorePopup('SPEED BOOST! +0.4x', '#00FF88')
       game.flashColor = '#00FF88'
       game.flashTimer = 0.3
     }
@@ -488,12 +489,9 @@ function update(dt) {
   game.time        += dt
   game.wheelAngle  += game.speedMult * dt * 6   // wheels spin faster at higher speed
   game.bobOffset    = Math.sin(game.time * 8 * game.speedMult) * 1.2  // road-bump bob
-  const prevMult    = game.speedMult
-  game.speedMult    = getSpeedMult(game.time)
-  if (game.speedBoostTimer > 0) {
-    game.speedBoostTimer -= dt
-    game.speedMult = Math.min(game.speedMult * 1.6, 5.0)  // 60% speed boost
-  }
+  const prevMult = game.speedMult
+  // Constant acceleration: +0.2 every 2 seconds = +0.1/sec, capped at 8x
+  game.speedMult = Math.min(1.0 + game.time * 0.1 + game.bonusSpeed, 8.0)
 
   const thresholds = [1.1, 1.2, 1.4, 1.6, 1.8, 2.2, 2.6]
   thresholds.forEach(th => {
@@ -513,7 +511,11 @@ function update(dt) {
   const prevX = game.playerX
   if (keys.left)  game.playerX -= MOVE_SPEED * dt
   if (keys.right) game.playerX += MOVE_SPEED * dt
-  game.playerX = Math.max(-ROAD_HALF_W_WORLD + 0.15, Math.min(ROAD_HALF_W_WORLD - 0.15, game.playerX))
+  // Fall off edge — no hard clamp, death if past road boundary
+  if (game.playerX < -ROAD_HALF_W_WORLD || game.playerX > ROAD_HALF_W_WORLD) {
+    addScorePopup('FELL OFF!', '#FF6600')
+    triggerDeath()
+  }
   game.playerVX = (game.playerX - prevX) / (dt || 0.016)  // for exhaust flare direction only
 
   // Wall ride
@@ -628,22 +630,44 @@ function drawRoad() {
   // Center dashed line
   drawNeonLine(W/2, far.y, W/2, near.y, '#9900FF', 1, 0.30)
 
-  // Horizontal grid lines — alternating purple/magenta
-  for (let i = 0; i < NUM_SEGS; i += 8) {
-    const s     = segScreen(i)
-    const alpha = s.t * 0.60
-    if (alpha < 0.02) continue
-    const col = (Math.floor(i / 8) % 2 === 0) ? '#9900FF' : '#CC00FF'
-    drawNeonLine(W/2 - s.halfW, s.y, W/2 + s.halfW, s.y, col, 1, alpha)
+  // World-space grid lines — anchored to fixed world Z, scroll as camera advances
+  // Each line is at worldZ = N * GRID_STEP; relZ = worldZ - game.cameraZ
+  const GRID_STEP = 10
+  const firstGrid = Math.ceil(game.cameraZ / GRID_STEP) * GRID_STEP
+  for (let n = 0; n < 14; n++) {
+    const worldZ = firstGrid + n * GRID_STEP
+    const relZ   = worldZ - game.cameraZ          // 0 = at camera, NUM_SEGS = horizon
+    if (relZ <= 0 || relZ >= NUM_SEGS) continue
+
+    // Interpolate between two adjacent segment screens for smooth sub-pixel scroll
+    const lo   = Math.floor(relZ), hi = Math.min(lo + 1, NUM_SEGS - 1)
+    const frac = relZ - lo
+    const sLo  = segScreen(NUM_SEGS - 1 - lo)
+    const sHi  = segScreen(NUM_SEGS - 1 - hi)
+    const sy   = sLo.y * (1 - frac) + sHi.y * frac
+    const hw   = sLo.halfW * (1 - frac) + sHi.halfW * frac
+    const alpha = (1 - relZ / NUM_SEGS) * 0.70
+    const col   = n % 2 === 0 ? '#9900FF' : '#CC00FF'
+    drawNeonLine(W/2 - hw, sy, W/2 + hw, sy, col, 1, alpha)
   }
+
+  // Lane dividers (world-space, same scroll)
+  const laneX1 = W/2 + LANES[0] * near.halfW / ROAD_HALF_W_WORLD
+  const laneX2 = W/2 + LANES[2] * near.halfW / ROAD_HALF_W_WORLD
+  drawNeonLine(laneX1, far.y, laneX1, near.y, '#550088', 1, 0.25)
+  drawNeonLine(laneX2, far.y, laneX2, near.y, '#550088', 1, 0.25)
 }
 
 // ── DRAW BUILDINGS ────────────────────────────────────────────
 function drawBuildings() {
   for (const b of BUILDINGS) {
-    const rawIdx = ((b.segIndex + Math.floor(game.cameraZ * 0.5)) % (NUM_SEGS * 0.8))
-    const si = ((rawIdx % (NUM_SEGS * 0.8)) + (NUM_SEGS * 0.8)) % (NUM_SEGS * 0.8)
-    if (si >= NUM_SEGS - 1 || si < 1) continue
+    // Building world-Z position loops every NUM_SEGS*0.8 world units
+    const BLOOP  = NUM_SEGS * 0.8
+    const bWorldZ = ((b.segIndex * 3) % BLOOP + BLOOP) % BLOOP
+    const relZ   = ((bWorldZ - game.cameraZ % BLOOP) % BLOOP + BLOOP) % BLOOP
+    if (relZ <= 0 || relZ >= NUM_SEGS - 1) continue
+    const si = NUM_SEGS - 1 - relZ
+    if (si < 1 || si >= NUM_SEGS - 1) continue
 
     const s   = segScreen(Math.floor(si))
     if (s.halfW < 1) continue
