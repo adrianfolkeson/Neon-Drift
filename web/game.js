@@ -487,11 +487,10 @@ const OCOL = {
 function projectObstacle(o) {
   const s = projectWorld(o.wz)
   if (!s) return null
-  const rHW = W*ROAD_W/2
-  const sx  = W/2 + o.wx*rHW
-  const sc  = 0.28 + 0.52*s.t
-  const sw  = rHW*0.58*sc
-  const sh  = sw*0.95
+  // Use s.halfW (road width at this depth) for X — anchors obstacle to its lane at all distances
+  const sx = W/2 + (o.wx / ROAD_HW) * s.halfW
+  const sw = s.halfW * 0.56
+  const sh = sw * 0.95
   return { x:sx-sw/2, y:s.y-sh, w:sw, h:sh, s }
 }
 
