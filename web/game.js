@@ -132,34 +132,11 @@ function sfxConfirm()   {
 }
 
 function startEngine() {
-  if (engineOsc) return
-  try {
-    const ac = getAC()
-    engineOsc  = ac.createOscillator()
-    engineGain = ac.createGain()
-    engineOsc.type = 'sawtooth'
-    engineOsc.frequency.value = 80
-    engineGain.gain.value = 0.04 * save.settings.sfxVol
-    engineOsc.connect(engineGain); engineGain.connect(ac.destination)
-    engineOsc.start()
-
-    const bufLen = ac.sampleRate * 2
-    const buf = ac.createBuffer(1, bufLen, ac.sampleRate)
-    const data = buf.getChannelData(0)
-    for (let i = 0; i < bufLen; i++) data[i] = Math.random()*2-1
-    windSrc = ac.createBufferSource()
-    windSrc.buffer = buf; windSrc.loop = true
-    const filt = ac.createBiquadFilter()
-    filt.type = 'bandpass'; filt.frequency.value = 800
-    windGain = ac.createGain(); windGain.gain.value = 0
-    windSrc.connect(filt); filt.connect(windGain); windGain.connect(ac.destination)
-    windSrc.start()
-  } catch(e){}
+  // Engine hum removed — only bass music plays
 }
 
 function stopEngine() {
-  try { if (engineOsc)  { engineOsc.stop();  engineOsc=null  } } catch(e){}
-  try { if (windSrc)    { windSrc.stop();    windSrc=null    } } catch(e){}
+  try { if (windSrc) { windSrc.stop(); windSrc=null } } catch(e){}
   engineGain = null; windGain = null
 }
 
@@ -1046,6 +1023,28 @@ function drawHUD() {
     ctx.shadowBlur=0
   }
 
+  // Streak meter bar
+  if (game.lastNearMiss && game.lastNearMiss.length > 0) {
+    const streak = game.lastNearMiss.length
+    const barW = 80, barH = 6, barX = 16, barY = 82
+    const streakCol = streak >= 7 ? '#FF00FF' : streak >= 5 ? '#FF6600' : streak >= 3 ? '#FFFF00' : '#00FFFF'
+    const glowAmt = 4 + streak * 1.5
+    const fill = Math.min(streak / 10, 1)
+    ctx.save()
+    ctx.textAlign = 'left'
+    ctx.font = `bold ${Math.min(9, W*0.014)}px Orbitron,monospace`
+    ctx.fillStyle = streakCol; ctx.shadowColor = streakCol; ctx.shadowBlur = glowAmt
+    ctx.fillText(`STREAK x${streak}`, barX, barY - 3)
+    ctx.shadowBlur = 0
+    ctx.fillStyle = 'rgba(255,255,255,0.1)'
+    ctx.fillRect(barX, barY, barW, barH)
+    ctx.fillStyle = streakCol
+    ctx.shadowColor = streakCol; ctx.shadowBlur = glowAmt * 1.5
+    ctx.fillRect(barX, barY, barW * fill, barH)
+    ctx.shadowBlur = 0
+    ctx.restore()
+  }
+
   if (game.wallRiding) {
     ctx.textAlign='center'
     ctx.font=`bold ${Math.min(16,W*0.025)}px Orbitron,monospace`
@@ -1059,7 +1058,7 @@ function drawHUD() {
     ctx.globalAlpha=Math.max(0,p.life)
     ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=8
     ctx.textAlign='center'
-    ctx.font=`bold ${Math.min(18,W*0.028)}px Orbitron,monospace`
+    ctx.font=`bold ${Math.min(p.size||18,W*0.028)}px Orbitron,monospace`
     ctx.fillText(p.text,p.x,p.y)
   }
   ctx.globalAlpha=1; ctx.shadowBlur=0
@@ -1092,6 +1091,8 @@ function initGame() {
     shakeX:0, shakeY:0, shakeDuration:0,
     flashColor:null, flashTimer:0,
     milestones:{30:false,60:false,120:false},
+    distMilestones:{}, pbBeaten:false,
+    countdownVal:3, countdownTimer:0,
   }
   pool.forEach(p=>p.alive=false)
 }
@@ -1308,8 +1309,19 @@ function triggerNearMiss() {
   emit(cp.x,cp.y,'#00FFFF',12,{speed:55,life:0.35,type:'spark',gravity:-20})
   emit(cp.x,cp.y,'#FFFFFF',5, {speed:30,life:0.20,r:3})
 
+  // Gold coin burst particles
+  for (let i = 0; i < 6; i++) {
+    const angle = -Math.PI/2 + (Math.random()-0.5)*Math.PI
+    emit(cp.x, cp.y, '#FFD700', 1, {
+      vx: Math.cos(angle)*(30+Math.random()*60),
+      vy: Math.sin(angle)*(20+Math.random()*40),
+      life: 0.5+Math.random()*0.3, r: 3+Math.random()*2,
+      gravity: 80, type: 'dot'
+    })
+  }
+
   // "CLOSE!" popup right above car (at head level), not just top HUD
-  game.scorePopups.push({text:`CLOSE! +${bonus}`, color:C.YEL, x:cp.x, y:cp.y-60, life:0.9})
+  game.scorePopups.push({text:`CLOSE! +${bonus}`, color:C.YEL, x:cp.x, y:cp.y-60, life:0.9, size: 14 + game.multiplier * 4})
   if (game.multiplier>1)
     game.scorePopups.push({text:`x${game.multiplier}`, color:'#FF00FF', x:cp.x+40, y:cp.y-40, life:0.7})
 
@@ -1352,10 +1364,31 @@ function startGame() {
   seqRowsLeft  = 3
   seqSpaceMult = 1.8
   seqBaseReact = 2.0
-  state = 'playing'
+  state = 'countdown'
+  game.countdownVal = 3
+  game.countdownTimer = 0
   sfxConfirm()
   startEngine()
   startMusic()
+}
+
+function renderCountdown() {
+  // Draw the game scene behind the countdown
+  renderGame()
+
+  clearButtons()
+  const val = game.countdownVal
+  const pulse = 0.7 + 0.3 * Math.sin(game.countdownTimer * Math.PI * 2)
+  const col = val === 3 ? '#00FFFF' : val === 2 ? '#FFFF00' : '#00FF88'
+
+  ctx.save()
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  ctx.shadowColor = col; ctx.shadowBlur = 60
+  ctx.fillStyle = col
+  ctx.font = `900 ${Math.min(120, W*0.22)*pulse}px Orbitron, monospace`
+  ctx.globalAlpha = 0.9
+  ctx.fillText(val > 0 ? val : 'GO!', W/2, H/2)
+  ctx.restore()
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -1453,6 +1486,32 @@ function update(dt) {
   if (!game.milestones[60]&&game.time>=60)  { game.milestones[60]=true;  triggerMilestone(60)  }
   if (!game.milestones[120]&&game.time>=120){ game.milestones[120]=true; triggerMilestone(120) }
 
+  // Distance milestones
+  const distMilestones = [250, 500, 1000, 2000, 5000]
+  for (const dm of distMilestones) {
+    const key = `dist_${dm}`
+    if (!game.distMilestones[key] && game.distance >= dm) {
+      game.distMilestones[key] = true
+      const bonus = dm * 2
+      game.score += bonus; game.coins += bonus
+      addPopup(`${dm >= 1000 ? dm/1000 + 'KM' : dm + 'M'}! +${bonus}`, '#00FFFF', W/2, H*0.35)
+      game.flashColor = '#00FFFF'; game.flashTimer = 0.2
+      sfxMilestone()
+    }
+  }
+
+  // Detect first moment of beating PB this run
+  if (!game.pbBeaten && save.highScore > 0 && Math.floor(game.score) > save.highScore) {
+    game.pbBeaten = true
+    game.flashColor = '#FFD700'; game.flashTimer = 0.4
+    game.slowMoTimer = 0.25
+    addPopup('NEW BEST!', '#FFD700', W/2, H*0.40)
+    sfxMilestone()
+    for (let i = 0; i < 20; i++) {
+      emit(W/2, H*0.5, '#FFD700', 1, {speed: 60+Math.random()*80, life: 0.6+Math.random()*0.4, r: 3+Math.random()*4, gravity: 30})
+    }
+  }
+
   game.scorePopups.forEach(p=>{p.y-=50*dt; p.life-=dt})
   game.scorePopups=game.scorePopups.filter(p=>p.life>0)
 }
@@ -1480,6 +1539,19 @@ function renderGame() {
   applyGrayscale()
   drawVignette()
 
+  // "In the zone" - subtle neon border when combo active
+  if (game.multiplier >= 2 && !game.dead) {
+    const zoneColors = {2:'#00FFFF', 3:'#FFFF00', 5:'#FF00FF'}
+    const zoneCol = zoneColors[game.multiplier] || '#FF00FF'
+    const zonePulse = 0.4 + 0.3 * Math.abs(Math.sin(game.time * 4))
+    ctx.save()
+    ctx.globalAlpha = zonePulse * 0.35
+    ctx.shadowColor = zoneCol; ctx.shadowBlur = 20
+    ctx.strokeStyle = zoneCol; ctx.lineWidth = 3
+    ctx.strokeRect(2, 2, W-4, H-4)
+    ctx.restore()
+  }
+
   ctx.restore()
   drawHUD()
 }
@@ -1490,6 +1562,7 @@ const keys = {left:false, right:false}
 document.addEventListener('keydown',e=>{
   if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A')  keys.left=true
   if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') keys.right=true
+  if (state === 'countdown') { state = 'playing'; return }
   // Game over: any non-modifier key = instant retry
   if (state==='gameover' && !['Tab','Alt','Meta','Control','Shift'].includes(e.key)) {
     startGame(); return
@@ -1509,6 +1582,7 @@ let touchStartX=0
 canvas.addEventListener('touchstart',e=>{
   touchStartX=e.touches[0].clientX
   e.preventDefault()
+  if (state === 'countdown') { state = 'playing'; return }
   if (state==='gameover') { startGame(); return }  // tap anywhere = instant retry
   if (state!=='playing') handleClick(e.touches[0].clientX,e.touches[0].clientY)
 },{passive:false})
@@ -2211,6 +2285,16 @@ function gameLoop(ts) {
   ensureGameDefaults()
 
   if      (state==='playing')     { update(dt); renderGame() }
+  else if (state==='countdown')   {
+    game.countdownTimer += dt
+    if (game.countdownTimer >= 1.0) {
+      game.countdownTimer = 0
+      game.countdownVal--
+      if (game.countdownVal < 0) state = 'playing'
+      else sfxSpeedUp()
+    }
+    renderCountdown()
+  }
   else if (state==='paused')      { renderGame(); renderPause() }
   else if (state==='gameover')    { renderGameOver() }
   else if (state==='menu')        { renderMenu() }
