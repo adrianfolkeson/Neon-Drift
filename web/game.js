@@ -311,16 +311,16 @@ function drawSky() {
   sg.addColorStop(1, '#1A0040')
   ctx.fillStyle = sg; ctx.fillRect(0, 0, W, hy)
 
-  const starOff = (game.cameraZ * 0.15) % W
-  for (let i = 0; i < 80; i++) {
+  const starOff = (game.cameraZ * 0.04) % W  // slower star parallax
+  for (let i = 0; i < 40; i++) {   // fewer stars, less visual noise
     const sx = ((i*1483+37) % W + starOff) % W
     const sy = (i*937+11) % hy
-    const sa = 0.3 + Math.sin(game.time*1.2 + i*0.8)*0.2
+    const sa = 0.18 + Math.sin(game.time*0.4 + i*0.8)*0.08  // dim, slow twinkle
     ctx.fillStyle = `rgba(220,180,255,${sa})`
     ctx.beginPath(); ctx.arc(sx, sy, i%7===0?1.4:0.7, 0, Math.PI*2); ctx.fill()
   }
 
-  const cityOff = (game.cameraZ*0.4) % (W*2)
+  const cityOff = (game.cameraZ*0.18) % (W*2)  // slower city parallax — less dizzy
   const buildW = W/6
   for (let b = 0; b < 12; b++) {
     const bx = ((b*buildW*1.3) - cityOff%(W*2) + W*2) % (W*2) - buildW
@@ -500,11 +500,11 @@ function drawObstacle(o) {
   const col   = OCOL[o.type] || OCOL.block
   // No distance fade — full visibility at all times
   const alpha = o.type==='ghost' ? 0.60 : 1.0
-  const pulse = 0.90+0.10*Math.sin(game.time*4+o.wz*0.5)
+  const pulse = 0.97+0.03*Math.sin(game.time*2.5+o.wz*0.5)  // subtle, slow pulse
 
   ctx.save()
   ctx.globalAlpha = alpha*pulse
-  ctx.shadowColor = col.s; ctx.shadowBlur = 36   // strong fixed glow
+  ctx.shadowColor = col.s; ctx.shadowBlur = 16   // readable glow, not overwhelming
   ctx.lineWidth   = 2.5
 
   const topH=p.h*0.35, shr=0.80
@@ -803,10 +803,10 @@ function drawCar() {
 
 // ─── Screen Effects ───────────────────────────────────────────────────────────
 function drawSpeedLines() {
-  const intensity = Math.min(1,(game.speedMult-1.5)/4)
+  const intensity = Math.min(1,(game.speedMult-3.5)/4)   // only at higher speed
   if (intensity<0.05) return
   const cp = carScreenPos()
-  ctx.save(); ctx.globalAlpha=0.08+intensity*0.12
+  ctx.save(); ctx.globalAlpha=0.04+intensity*0.07  // subtler speed lines
   ctx.strokeStyle=getSkinColor(); ctx.lineWidth=1
   for (let i=0;i<16;i++) {
     const angle=(i/16)*Math.PI*2
@@ -820,7 +820,7 @@ function drawSpeedLines() {
 }
 
 function drawChromaticAberration() {
-  const intensity = Math.min(1,(game.speedMult-2.5)/3)
+  const intensity = Math.min(0.4,(game.speedMult-5.5)/4)  // only triggers at very high speed, capped low
   if (intensity<0.05) return
   const off = Math.floor(intensity*5)
   ctx.save()
@@ -841,7 +841,7 @@ function drawVignette() {
 function applyFlash() {
   if (game.flashTimer>0 && game.flashColor) {
     ctx.fillStyle=game.flashColor
-    ctx.globalAlpha=Math.min(0.5,game.flashTimer*0.5)
+    ctx.globalAlpha=Math.min(0.22,game.flashTimer*0.25)
     ctx.fillRect(0,0,W,H)
     ctx.globalAlpha=1
   }
@@ -1005,11 +1005,11 @@ function spawnObstacles() {
   const t   = game.time
   const spd = game.speedMult
 
-  // Base reaction window — min 0.95s
-  const baseReact = t < 15  ? 3.2
-                  : t < 45  ? 2.4
-                  : t < 90  ? 1.7
-                  : Math.max(0.95, 1.7 - (t - 90) * 0.004)
+  // Base reaction window — starts tighter, min 0.90s
+  const baseReact = t < 10  ? 2.4
+                  : t < 30  ? 2.0
+                  : t < 70  ? 1.6
+                  : Math.max(0.90, 1.6 - (t - 70) * 0.005)
 
   // Add random spacing variation: ±30% for rhythm unpredictability
   const reactVariance = baseReact * (0.7 + Math.random() * 0.6)
@@ -1027,24 +1027,24 @@ function spawnObstacles() {
   let pool = []
   const rand = Math.random()
 
-  if (t < 8) {
-    // Intro: center always open, 1 block max
-    pool = [[true, false, false], [false, false, true], [false, false, false]]
-  } else if (t < 20) {
-    // Easy: only singles + occasional clear
-    if (rand < 0.15) pool = PLIB.clear
-    else             pool = PLIB.single
-  } else if (t < 50) {
-    // Medium: singles 50%, doubles 35%, clear 15%
+  if (t < 4) {
+    // Very brief intro: center open, 1 block only
+    pool = [[true, false, false], [false, false, true]]
+  } else if (t < 12) {
+    // Early: mostly singles, occasional double already
+    if (rand < 0.12)      pool = PLIB.clear
+    else if (rand < 0.30) pool = PLIB.double
+    else                  pool = PLIB.single
+  } else if (t < 40) {
+    // Medium: doubles 45%, singles 40%, clear 15%
     if (rand < 0.15)      pool = PLIB.clear
-    else if (rand < 0.50) pool = PLIB.double
+    else if (rand < 0.55) pool = PLIB.double
     else                  pool = PLIB.single
   } else {
-    // Hard: doubles dominant, occasional single/clear for rhythm
-    if (rand < 0.10)      pool = PLIB.clear
-    else if (rand < 0.30) pool = PLIB.single
+    // Hard: doubles dominant
+    if (rand < 0.08)      pool = PLIB.clear
+    else if (rand < 0.25) pool = PLIB.single
     else                  pool = PLIB.double
-    // Burst limiter: after 3 consecutive doubles, force a single/clear
     if (burstCount >= 3 && pool === PLIB.double) {
       pool = rand < 0.4 ? PLIB.clear : PLIB.single
     }
@@ -1096,8 +1096,8 @@ function addPopup(text,color,x,y) {
 function triggerDeath() {
   if (game.dead) return
   game.dead=true
-  game.shakeDuration=0.7
-  game.flashColor='#FF0044'; game.flashTimer=0.5
+  game.shakeDuration=0.3   // halved — less disorienting
+  game.flashColor='#FF0044'; game.flashTimer=0.25
   const cp=carScreenPos()
   emit(cp.x,cp.y,'#FF4400',25,{speed:80,life:0.8,r:5,gravity:40,type:'spark'})
   emit(cp.x,cp.y,'#FF0044',20,{speed:60,life:0.6,r:6})
@@ -1115,7 +1115,7 @@ function triggerNearMiss() {
   const bonus=50*game.multiplier
   game.score+=bonus; game.coins+=50
   addPopup(`NEAR MISS! +${bonus}`,C.YEL)
-  game.flashColor='#00FFFF'; game.flashTimer=0.12
+  game.flashColor='#00FFFF'; game.flashTimer=0.06
   const cp=carScreenPos()
   emit(cp.x,cp.y,'#00FFFF',8,{speed:40,life:0.3,type:'spark'})
   sfxNearMiss()
@@ -1172,7 +1172,8 @@ function update(dt) {
   game.time+=dt
   wheelAngle+=game.speedMult*dt*6
 
-  game.speedMult=Math.min(1.0+game.time*0.1+game.bonusSpeed, 8.0)
+  // Start at "t=12s equivalent" — skip slow ramp, game is engaging immediately
+  game.speedMult=Math.min(2.2 + game.time*0.10 + game.bonusSpeed, 8.0)
 
   const scrollSpeed=15*game.speedMult
   game.carZ   +=scrollSpeed*dt
