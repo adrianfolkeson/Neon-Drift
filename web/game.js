@@ -320,23 +320,13 @@ function drawSky() {
     ctx.beginPath(); ctx.arc(sx, sy, i%7===0?1.4:0.7, 0, Math.PI*2); ctx.fill()
   }
 
-  const cityOff = (game.cameraZ*0.18) % (W*2)  // slower city parallax — less dizzy
-  const buildW = W/6
-  for (let b = 0; b < 12; b++) {
-    const bx = ((b*buildW*1.3) - cityOff%(W*2) + W*2) % (W*2) - buildW
-    const bh = hy*(0.3 + ((b*73+17)%100)/200)
-    const bw = buildW*(0.5 + ((b*41+7)%50)/100)
-    ctx.fillStyle='#0A0020'
-    ctx.shadowColor='#FF00FF'; ctx.shadowBlur=8
-    ctx.fillRect(bx, hy-bh, bw, bh)
-    ctx.fillStyle='rgba(255,200,100,0.4)'
-    for (let r=0; r<4; r++) {
-      for (let c=0; c<3; c++) {
-        if ((b+r+c)%3!==0) ctx.fillRect(bx+c*bw/4+4, hy-bh+r*18+8, 6, 8)
-      }
-    }
-  }
-  ctx.shadowBlur=0
+  // Horizon glow line — subtle purple bloom at horizon
+  const hgr = ctx.createLinearGradient(0, hy-18, 0, hy+12)
+  hgr.addColorStop(0, 'rgba(100,0,180,0)')
+  hgr.addColorStop(0.5, 'rgba(120,0,200,0.12)')
+  hgr.addColorStop(1, 'rgba(80,0,140,0)')
+  ctx.fillStyle = hgr; ctx.fillRect(0, hy-18, W, 30)
+  ctx.shadowBlur = 0
 }
 
 // ─── Road ────────────────────────────────────────────────────────────────────
@@ -404,37 +394,56 @@ function initBuildings() {
 initBuildings()
 
 function drawBuildings() {
-  const BLOOP = NUM_SEGS*0.85
+  const hy = getHorizonY()
+  // Tiny drift: buildings barely move — almost static, just enough to feel alive
+  const drift = (game.cameraZ * 0.018) % (W * 2)
+
   for (const b of BUILDINGS) {
-    const bwz  = ((b.phase*5)%BLOOP+BLOOP)%BLOOP
-    const rel  = ((bwz-game.cameraZ%BLOOP)%BLOOP+BLOOP)%BLOOP
-    if (rel<=0 || rel>=NUM_SEGS-1) continue
-    const si = Math.max(1, Math.min(NUM_SEGS-2, Math.round(NUM_SEGS-1-rel)))
-    const s  = segScreen(si)
-    if (s.halfW<2) continue
-    const bw = s.halfW*b.width*1.8
-    const bh = (H-s.y)*b.height*1.8 + s.halfW*b.height*2.5
-    const bx = b.side==='left' ? W/2-s.halfW-bw*0.7 : W/2+s.halfW+bw*0.7-bw
-    const by = s.y-bh
-    if (bw<3||bh<3) continue
-    const a = Math.min(0.9, s.t*1.1)
-    ctx.save(); ctx.globalAlpha=a
-    ctx.fillStyle='#080018'
+    const side  = b.side === 'left'
+    // Fixed screen X position based on phase, with tiny drift
+    const baseX = side
+      ? W * 0.01 + (b.phase * W * 0.18) % (W * 0.42)
+      : W * 0.57 + (b.phase * W * 0.18) % (W * 0.42)
+    const bx = ((baseX - drift * (side ? 0.5 : -0.5)) % W + W) % W
+
+    // Fixed screen height — buildings are distant, always near horizon
+    const bh = hy * (0.22 + b.height * 0.38)
+    const bw = W * (0.028 + b.width * 0.040)
+    const by = hy - bh
+
+    if (bx + bw < 0 || bx > W) continue
+
+    ctx.save()
+    ctx.globalAlpha = 0.32   // dim — background silhouette only
+
+    // Dark fill, silhouette look
+    ctx.fillStyle = '#060014'
     ctx.fillRect(bx, by, bw, bh)
-    ctx.strokeStyle='#FF00FF'; ctx.shadowColor='#FF00FF'; ctx.shadowBlur=6; ctx.lineWidth=1
+
+    // Faint dim outline — no shadowBlur, no glow
+    ctx.strokeStyle = 'rgba(120,40,180,0.35)'
+    ctx.lineWidth   = 0.75
     ctx.strokeRect(bx, by, bw, bh)
-    const floors = Math.max(2, Math.floor(2+s.t*6))
-    for (let f=1; f<floors; f++) {
-      const fy = by+(bh/floors)*f
-      ctx.beginPath(); ctx.moveTo(bx,fy); ctx.lineTo(bx+bw,fy); ctx.stroke()
+
+    // Subtle horizontal floor lines (every ~12px)
+    ctx.strokeStyle = 'rgba(100,30,150,0.18)'
+    ctx.lineWidth   = 0.5
+    const floorH = Math.max(8, bh / Math.max(3, Math.floor(bh / 14)))
+    for (let y = by + floorH; y < by + bh - 2; y += floorH) {
+      ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx + bw, y); ctx.stroke()
     }
-    ctx.shadowBlur=0
-    ctx.fillStyle='rgba(255,200,80,0.5)'
-    for (let r=0; r<Math.min(floors-1,4); r++) {
-      for (let c=0; c<2; c++) {
-        if ((Math.floor(b.phase)+r+c)%3!==0) {
-          const wx2=bx+c*(bw/3)+3, wy=by+(bh/floors)*r+4
-          ctx.fillRect(wx2, wy, Math.max(2,bw/4), Math.max(2,bh/floors*0.4))
+
+    // A few dim window dots — static, no animation
+    ctx.fillStyle = 'rgba(200,160,80,0.28)'
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 2; c++) {
+        if ((Math.floor(b.phase * 3) + r + c) % 3 !== 0) {
+          ctx.fillRect(
+            bx + c * (bw * 0.35) + bw * 0.1,
+            by + r * (bh * 0.24) + bh * 0.08,
+            Math.max(1.5, bw * 0.14),
+            Math.max(1.5, bh * 0.06)
+          )
         }
       }
     }
