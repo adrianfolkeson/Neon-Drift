@@ -115,8 +115,9 @@ function sfxPlay(freq, type, duration, volMult, freqEnd) {
   } catch(e){}
 }
 
-function sfxCrash()     { sfxPlay(200,'sawtooth',0.5,1.2,50) }
-function sfxNearMiss()  { sfxPlay(800,'sine',0.15,0.7,1200) }
+function sfxCrash()      { sfxPlay(200,'sawtooth',0.5,1.2,50) }
+function sfxNearMiss()   { sfxPlay(800,'sine',0.15,0.7,1200) }
+function sfxLaneSwitch() { sfxPlay(320,'sine',0.04,0.18,380) }   // subtle click
 function sfxSpeedUp()   { sfxPlay(400,'sine',0.2,0.6,900) }
 function sfxCoin()      { sfxPlay(1000,'sine',0.08,0.4) }
 function sfxMilestone() {
@@ -879,7 +880,15 @@ function drawHUD() {
   ctx.shadowBlur=0
   ctx.font=`${Math.min(13,W*0.02)}px Orbitron,monospace`
   ctx.fillStyle='rgba(255,255,255,0.35)'
-  ctx.fillText(`BEST: ${save.highScore.toLocaleString()}`, W/2, 62)
+  if (Math.floor(game.score) > save.highScore && save.highScore > 0) {
+    const pbPulse=0.7+0.3*Math.abs(Math.sin(game.time*6))
+    ctx.fillStyle=C.GOLD; ctx.shadowColor=C.GOLD; ctx.shadowBlur=10; ctx.globalAlpha=pbPulse
+    ctx.fillText('NEW BEST!', W/2, 62)
+    ctx.shadowBlur=0; ctx.globalAlpha=1
+  } else {
+    ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.shadowBlur=0
+    ctx.fillText(`BEST: ${save.highScore.toLocaleString()}`, W/2, 62)
+  }
 
   const mx=W-60, my=54, mr=38
   ctx.strokeStyle='rgba(255,255,255,0.1)'; ctx.lineWidth=5
@@ -949,6 +958,7 @@ function initGame() {
     playerX:0, playerVX:0,
     score:0, coins:0, time:0, distance:0,
     speedMult:1.0, bonusSpeed:0, speedBoostTimer:0,
+    slowMoTimer:0,   // near-miss time dilation
     obstacles:[], speedPads:[],
     scorePopups:[],
     dead:false, deathTimer:0, usedRevive:false, newRecord:false,
@@ -1123,10 +1133,21 @@ function triggerNearMiss() {
   game.multiplier=streak>=10?5:streak>=5?3:streak>=3?2:1
   const bonus=50*game.multiplier
   game.score+=bonus; game.coins+=50
-  addPopup(`NEAR MISS! +${bonus}`,C.YEL)
+
+  // Slow-mo hit — 0.18s time dilation at 28% speed
+  game.slowMoTimer=0.18
   game.flashColor='#00FFFF'; game.flashTimer=0.06
+
   const cp=carScreenPos()
-  emit(cp.x,cp.y,'#00FFFF',8,{speed:40,life:0.3,type:'spark'})
+  // Sparks burst outward from car
+  emit(cp.x,cp.y,'#00FFFF',12,{speed:55,life:0.35,type:'spark',gravity:-20})
+  emit(cp.x,cp.y,'#FFFFFF',5, {speed:30,life:0.20,r:3})
+
+  // "CLOSE!" popup right above car (at head level), not just top HUD
+  game.scorePopups.push({text:`CLOSE! +${bonus}`, color:C.YEL, x:cp.x, y:cp.y-60, life:0.9})
+  if (game.multiplier>1)
+    game.scorePopups.push({text:`x${game.multiplier}`, color:'#FF00FF', x:cp.x+40, y:cp.y-40, life:0.7})
+
   sfxNearMiss()
 }
 
@@ -1174,9 +1195,12 @@ function update(dt) {
   if (game.dead) {
     game.deathTimer+=dt
     updateParticles(dt)
-    if (game.deathTimer>2.5) { finalizeScore(); state='gameover' }
+    if (game.deathTimer>1.2) { finalizeScore(); state='gameover' }  // fast to game over
     return
   }
+
+  // Near-miss slow-mo time dilation
+  if (game.slowMoTimer>0) { game.slowMoTimer-=dt; dt*=0.28 }
 
   game.time+=dt
   wheelAngle+=game.speedMult*dt*6
@@ -1196,9 +1220,12 @@ function update(dt) {
 
   const MOVE_SPEED=1.8
   const prevX=game.playerX
+  const wasMoving=game.playerVX!==0
   if (keys.left)  game.playerX-=MOVE_SPEED*dt
   if (keys.right) game.playerX+=MOVE_SPEED*dt
   game.playerVX=(game.playerX-prevX)/(dt||0.016)
+  // Lane switch SFX — fire once when movement starts (not every frame)
+  if (!wasMoving && Math.abs(game.playerVX)>0.1) sfxLaneSwitch()
 
   if (game.playerX < -ROAD_HW || game.playerX > ROAD_HW) {
     addPopup('FELL OFF!','#FF6600',W/2,H*0.5)
@@ -1295,6 +1322,10 @@ const keys = {left:false, right:false}
 document.addEventListener('keydown',e=>{
   if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A')  keys.left=true
   if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') keys.right=true
+  // Game over: any non-modifier key = instant retry
+  if (state==='gameover' && !['Tab','Alt','Meta','Control','Shift'].includes(e.key)) {
+    startGame(); return
+  }
   if (e.key==='Escape') {
     if      (state==='playing') state='paused'
     else if (state==='paused')  state='playing'
@@ -1310,6 +1341,7 @@ let touchStartX=0
 canvas.addEventListener('touchstart',e=>{
   touchStartX=e.touches[0].clientX
   e.preventDefault()
+  if (state==='gameover') { startGame(); return }  // tap anywhere = instant retry
   if (state!=='playing') handleClick(e.touches[0].clientX,e.touches[0].clientY)
 },{passive:false})
 canvas.addEventListener('touchmove',e=>{
@@ -1603,36 +1635,48 @@ function renderGameOver() {
     ctx.textAlign='left'
   })
 
+  // Score delta vs personal best
+  const score=Math.floor(game.score)
+  const diff=score - save.highScore
+  ctx.textAlign='center'; ctx.font=`${Math.min(13,W*0.02)}px Orbitron,monospace`
   if (game.newRecord) {
-    const recPulse=0.85+0.15*Math.sin(menuTime*10)
-    ctx.textAlign='center'
-    ctx.font=`bold ${Math.min(18,W*0.028)*recPulse}px Orbitron,monospace`
-    ctx.fillStyle=C.GOLD; ctx.shadowColor=C.GOLD; ctx.shadowBlur=18
-    ctx.fillText('NEW RECORD!',W/2,py2+ph+14)
+    const recPulse=0.88+0.12*Math.sin(menuTime*10)
+    ctx.font=`bold ${Math.min(20,W*0.032)*recPulse}px Orbitron,monospace`
+    ctx.fillStyle=C.GOLD; ctx.shadowColor=C.GOLD; ctx.shadowBlur=22
+    ctx.fillText('NEW PERSONAL BEST!',W/2,py2+ph+16)
     ctx.shadowBlur=0
+  } else if (diff > -30) {
+    ctx.fillStyle='rgba(255,200,0,0.8)'
+    ctx.fillText(`SO CLOSE! ${diff} from PB`,W/2,py2+ph+16)
+  } else {
+    ctx.fillStyle='rgba(255,255,255,0.35)'
+    ctx.fillText(`BEST: ${save.highScore.toLocaleString()}`,W/2,py2+ph+16)
   }
-
-  ctx.textAlign='center'
-  ctx.font=`${Math.min(12,W*0.018)}px Orbitron,monospace`
-  ctx.fillStyle='rgba(255,255,255,0.35)'
-  ctx.fillText(`BEST: ${save.highScore.toLocaleString()}  •  TOTAL COINS: ${save.totalCoins.toLocaleString()}`,W/2,py2+ph+42+(game.newRecord?22:0))
+  ctx.shadowBlur=0
+  ctx.fillStyle='rgba(255,255,255,0.22)'
+  ctx.font=`${Math.min(11,W*0.017)}px Orbitron,monospace`
+  ctx.fillText(`TOTAL COINS: ${save.totalCoins.toLocaleString()}`,W/2,py2+ph+36+(game.newRecord||diff>-30?0:0))
   ctx.restore()
 
-  const bw=Math.min(240,W*0.38), bh=46, bx=W/2-bw/2
-  let btnY=H*0.72
+  // Tap anywhere hint — most prominent action
+  const pulse2=0.6+0.4*Math.abs(Math.sin(menuTime*3))
+  ctx.save(); ctx.textAlign='center'; ctx.globalAlpha=pulse2
+  ctx.font=`bold ${Math.min(19,W*0.030)}px Orbitron,monospace`
+  ctx.fillStyle='#00FFFF'; ctx.shadowColor='#00FFFF'; ctx.shadowBlur=14
+  ctx.fillText('TAP ANYWHERE TO RETRY',W/2,H*0.68)
+  ctx.shadowBlur=0; ctx.restore()
+
+  const bw=Math.min(200,W*0.32), bh=40, bx=W/2-bw/2
+  let btnY=H*0.76
   let btnIdx=0
 
   if (!game.usedRevive) {
-    drawButton(bx,btnY,bw,bh,'REVIVE (WATCH AD)',menuHovered===btnIdx,C.GOLD)
+    drawButton(bx,btnY,bw,bh,'REVIVE (AD)',menuHovered===btnIdx,C.GOLD)
     registerButton(bx,btnY,bw,bh,()=>{ triggerRevive(); sfxConfirm() })
-    btnY+=bh+10; btnIdx++
+    btnY+=bh+8; btnIdx++
   }
 
-  drawButton(bx,btnY,bw,bh,'PLAY AGAIN',menuHovered===btnIdx,'#00FFFF')
-  registerButton(bx,btnY,bw,bh,()=>startGame())
-  btnY+=bh+10; btnIdx++
-
-  drawButton(bx,btnY,bw,bh,'MENU',menuHovered===btnIdx,'rgba(255,255,255,0.5)')
+  drawButton(bx,btnY,bw,bh,'MENU',menuHovered===btnIdx,'rgba(255,255,255,0.4)')
   registerButton(bx,btnY,bw,bh,()=>{ state='menu' })
 }
 
