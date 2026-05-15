@@ -954,59 +954,122 @@ function initGame() {
 
 // ─── Spawn ────────────────────────────────────────────────────────────────────
 // Tracks last open lane so consecutive patterns are always reachable
-let lastOpenLane = 1
+// ── Pattern library ────────────────────────────────────────────────────────
+// Each entry: blocked[] = which lanes are blocked (true/false), openIdx = which lane(s) open
+// Guaranteed: at least 1 false (open lane) in every pattern
+const PLIB = {
+  // 1 block, 2 open — very forgiving, player has lots of space
+  single: [
+    [true,  false, false],   // left blocked
+    [false, true,  false],   // center blocked
+    [false, false, true ],   // right blocked
+  ],
+  // 2 blocks, 1 open — requires precision
+  double: [
+    [true,  true,  false],   // open RIGHT
+    [false, true,  true ],   // open LEFT
+    [true,  false, true ],   // open CENTER (hardest — sandwiched)
+  ],
+  // 0 blocks — breathing room / rhythm break
+  clear: [
+    [false, false, false],
+  ],
+}
+
+// Track the "open zone center X" of last spawn to enforce reachability
+let lastOpenX   = LANES[1]   // start center
+let burstCount  = 0           // how many consecutive hard patterns
+
+function pickObstacleType(t, spd) {
+  const r = Math.random()
+  let type = 'block'
+  if      (t > 30 && r < 0.18) type = 'moving'
+  else if (t > 50 && r < 0.22) type = 'shrinking'
+  else if (t > 65 && r < 0.28) type = 'rotating'
+  else if (t > 80 && r < 0.32) type = 'ghost'
+  if (spd > 4.5 && (type === 'moving' || type === 'rotating')) type = 'block'
+  return type
+}
+
+function openXofPattern(pat) {
+  const open = [0,1,2].filter(i => !pat[i])
+  return open.reduce((s, i) => s + LANES[i], 0) / open.length
+}
+
+function isReachable(fromX, toX, reactionSecs) {
+  // Player can move MOVE_SPEED world-units per second
+  return Math.abs(toX - fromX) <= 1.8 * reactionSecs + 0.15
+}
 
 function spawnObstacles() {
   const t   = game.time
   const spd = game.speedMult
 
-  // Reaction window in real seconds — decreases with time, hard minimum 0.95s
-  const reactionSecs = t < 15  ? 3.2
-                     : t < 45  ? 2.4
-                     : t < 90  ? 1.7
-                     : Math.max(0.95, 1.7 - (t - 90) * 0.004)
+  // Base reaction window — min 0.95s
+  const baseReact = t < 15  ? 3.2
+                  : t < 45  ? 2.4
+                  : t < 90  ? 1.7
+                  : Math.max(0.95, 1.7 - (t - 90) * 0.004)
 
-  // Convert to world-segments so spacing auto-scales with speed
-  const spacing = reactionSecs * (15 * spd)
+  // Add random spacing variation: ±30% for rhythm unpredictability
+  const reactVariance = baseReact * (0.7 + Math.random() * 0.6)
+  const spacing = reactVariance * (15 * spd)
 
   const furthestZ = game.obstacles.length
     ? Math.max(...game.obstacles.map(o => o.wz))
     : game.carZ
 
-  if (furthestZ >= game.cameraZ + NUM_SEGS + 5) return   // already have plenty ahead
+  if (furthestZ >= game.cameraZ + NUM_SEGS + 5) return
 
   const spawnZ = Math.max(furthestZ + spacing, game.cameraZ + NUM_SEGS)
 
-  // ── Fair lane selection ─────────────────────────────────────────
-  // Open lane can only move ±1 from previous — impossible cross-2-lane jumps forbidden
-  let openLane
+  // ── Choose pattern pool based on phase ─────────────────────────
+  let pool = []
+  const rand = Math.random()
+
   if (t < 8) {
-    openLane = 1                             // always center at start (easiest)
+    // Intro: center always open, 1 block max
+    pool = [[true, false, false], [false, false, true], [false, false, false]]
+  } else if (t < 20) {
+    // Easy: only singles + occasional clear
+    if (rand < 0.15) pool = PLIB.clear
+    else             pool = PLIB.single
+  } else if (t < 50) {
+    // Medium: singles 50%, doubles 35%, clear 15%
+    if (rand < 0.15)      pool = PLIB.clear
+    else if (rand < 0.50) pool = PLIB.double
+    else                  pool = PLIB.single
   } else {
-    const roll = Math.random()
-    if (roll < 0.25) {
-      openLane = lastOpenLane               // stay same lane (25%)
-    } else {
-      const adj = []
-      if (lastOpenLane > 0) adj.push(lastOpenLane - 1)
-      if (lastOpenLane < 2) adj.push(lastOpenLane + 1)
-      openLane = adj[Math.floor(Math.random() * adj.length)]   // move one lane (75%)
+    // Hard: doubles dominant, occasional single/clear for rhythm
+    if (rand < 0.10)      pool = PLIB.clear
+    else if (rand < 0.30) pool = PLIB.single
+    else                  pool = PLIB.double
+    // Burst limiter: after 3 consecutive doubles, force a single/clear
+    if (burstCount >= 3 && pool === PLIB.double) {
+      pool = rand < 0.4 ? PLIB.clear : PLIB.single
     }
   }
-  lastOpenLane = openLane
 
-  // ── Obstacle type — unlock harder types gradually ───────────────
-  const r = Math.random()
-  let type = 'block'
-  if      (t > 30 && r < 0.18) type = 'moving'
-  else if (t > 50 && r < 0.25) type = 'shrinking'
-  else if (t > 60 && r < 0.30) type = 'rotating'
-  else if (t > 75 && r < 0.34) type = 'ghost'
-  // Disable moving/rotating at very high speed — reaction time is already brutal
-  if (spd > 4.5 && (type === 'moving' || type === 'rotating')) type = 'block'
+  // ── Pick pattern — reachability filter ─────────────────────────
+  // Shuffle pool then pick first reachable candidate
+  const shuffled = pool.slice().sort(() => Math.random() - 0.5)
+  let chosen = shuffled[0]  // fallback
+  for (const candidate of shuffled) {
+    const cx = openXofPattern(candidate)
+    if (isReachable(lastOpenX, cx, baseReact)) { chosen = candidate; break }
+  }
 
+  const openX = openXofPattern(chosen)
+  lastOpenX   = openX
+  burstCount  = (chosen === PLIB.double[0] || chosen === PLIB.double[1] || chosen === PLIB.double[2])
+                  ? burstCount + 1 : 0
+
+  // ── Pick obstacle type ─────────────────────────────────────────
+  const type = pickObstacleType(t, spd)
+
+  // ── Spawn blocked lanes ────────────────────────────────────────
   for (let lane = 0; lane < 3; lane++) {
-    if (lane === openLane) continue
+    if (!chosen[lane]) continue
     game.obstacles.push({
       wz: spawnZ, wx: LANES[lane],
       halfW: 0.27, origHalfW: 0.27,
@@ -1089,7 +1152,8 @@ function finalizeScore() {
 
 function startGame() {
   initGame()
-  lastOpenLane = 1   // always start with center lane open
+  lastOpenX  = LANES[1]   // always start with center open
+  burstCount = 0
   state = 'playing'
   sfxConfirm()
   startEngine()
