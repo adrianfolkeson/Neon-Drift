@@ -540,7 +540,8 @@ function drawObstacle(o) {
   ctx.globalAlpha = alpha
 
   // ── Interior fill — very transparent, holographic feel ──────────
-  const interiorAlpha = o.type === 'ghost' ? 0.06 : 0.10
+  // Solid fill — obstacles are opaque blocks
+  const interiorAlpha = o.type === 'ghost' ? 0.45 : 0.88
   ctx.fillStyle = col.f.replace(/[\d.]+\)$/, `${interiorAlpha})`)
   ctx.fillRect(x, y, w, h)
 
