@@ -1122,17 +1122,22 @@ const PLIB = {
   ],
 }
 
-// Track the "open zone center X" of last spawn to enforce reachability
 // ── Sequence state machine ──────────────────────────────────────────────────
-// Phases: 'intro' | 'breath' | 'flow' | 'tension' | 'burst'
-// Each phase runs for seqRowsLeft rows then transitions to next phase.
-// Spacing multiplier controls density within the phase.
+// Phases (ordered by difficulty):
+//   intro → breath → flow → tension → burst → zigzag → gauntlet
+// All time-scaled: longer sequences, tighter spacing, harder patterns as t grows.
 
 let lastOpenX    = LANES[1]
 let seqPhase     = 'intro'
 let seqRowsLeft  = 3
-let seqSpaceMult = 1.8    // spacing as fraction of base reaction time
-let seqBaseReact = 2.0    // reaction seconds at current phase start
+let seqSpaceMult = 1.8
+let seqBaseReact = 2.0
+let seqStep      = 0     // position within scripted sequences (zigzag/gauntlet)
+
+// Scripted open-lane sequences for advanced phases
+// Each entry is an index into PLIB.double (0=openRight, 1=openLeft, 2=openCenter)
+const ZIGZAG_SCRIPT  = [0, 1, 0, 1, 2, 0, 1]   // RIGHT↔LEFT↔CENTER rapid switches
+const GAUNTLET_SCRIPT = [2, 0, 1, 2, 0, 1, 0, 2, 1]  // cycles through all three
 
 function pickObstacleType(t, spd) {
   const r = Math.random()
@@ -1155,73 +1160,105 @@ function isReachable(fromX, toX, secs) {
 }
 
 function nextSequence(t) {
-  const r  = Math.random()
+  const r    = Math.random()
   const prev = seqPhase
 
-  // Global reaction window floor
-  const react = t < 10 ? 2.2
-              : t < 30 ? 1.9
-              : t < 70 ? 1.55
-              : Math.max(0.88, 1.55 - (t-70)*0.005)
-  seqBaseReact = react
+  // Time progress 0→1 over first 2 minutes (capped)
+  const ts = Math.min(1, t / 120)
 
-  // Transition table: prev phase → next phase weights
+  // Reaction window shrinks with time — min 0.82s
+  seqBaseReact = t < 10 ? 2.2
+               : t < 30 ? 1.9 - ts * 0.1
+               : t < 70 ? 1.7 - ts * 0.3
+               : Math.max(0.82, 1.4 - (t - 70) * 0.006)
+
+  seqStep = 0  // reset scripted position on new sequence
+
+  // ── Transition table (evolves with time) ────────────────────────
   if (prev === 'intro' || prev === 'breath') {
-    seqPhase    = r < 0.55 ? 'flow' : (r < 0.85 ? 'tension' : 'burst')
-  } else if (prev === 'burst') {
-    seqPhase    = r < 0.70 ? 'breath' : 'flow'   // always give relief after burst
+    if      (t < 20) seqPhase = r < 0.65 ? 'flow'    : 'tension'
+    else if (t < 50) seqPhase = r < 0.40 ? 'flow'    : (r < 0.80 ? 'tension' : 'burst')
+    else if (t < 80) seqPhase = r < 0.25 ? 'flow'    : (r < 0.60 ? 'tension' : (r < 0.85 ? 'burst' : 'zigzag'))
+    else             seqPhase = r < 0.15 ? 'flow'    : (r < 0.40 ? 'tension' : (r < 0.65 ? 'burst' : (r < 0.82 ? 'zigzag' : 'gauntlet')))
+  } else if (prev === 'burst' || prev === 'zigzag') {
+    // ALWAYS give relief after intense sequences
+    seqPhase = r < 0.75 ? 'breath' : 'flow'
+  } else if (prev === 'gauntlet') {
+    seqPhase = 'breath'   // gauntlet always earns full breath
   } else if (prev === 'flow') {
-    seqPhase    = r < 0.18 ? 'breath' : (r < 0.52 ? 'flow' : (r < 0.82 ? 'tension' : 'burst'))
+    if      (t < 30) seqPhase = r < 0.25 ? 'breath' : (r < 0.65 ? 'flow'    : 'tension')
+    else if (t < 60) seqPhase = r < 0.18 ? 'breath' : (r < 0.45 ? 'flow'    : (r < 0.78 ? 'tension' : 'burst'))
+    else             seqPhase = r < 0.12 ? 'breath' : (r < 0.30 ? 'flow'    : (r < 0.58 ? 'tension' : (r < 0.80 ? 'burst' : 'zigzag')))
   } else { // tension
-    seqPhase    = r < 0.22 ? 'breath' : (r < 0.48 ? 'flow' : (r < 0.78 ? 'tension' : 'burst'))
+    if      (t < 40) seqPhase = r < 0.28 ? 'breath' : (r < 0.55 ? 'flow'    : (r < 0.85 ? 'tension' : 'burst'))
+    else if (t < 70) seqPhase = r < 0.20 ? 'breath' : (r < 0.40 ? 'flow'    : (r < 0.68 ? 'tension' : (r < 0.88 ? 'burst' : 'zigzag')))
+    else             seqPhase = r < 0.14 ? 'breath' : (r < 0.28 ? 'flow'    : (r < 0.50 ? 'tension' : (r < 0.72 ? 'burst' : (r < 0.86 ? 'zigzag' : 'gauntlet'))))
   }
 
-  // Burst requires some game time to unlock
-  if (seqPhase === 'burst' && t < 20) seqPhase = 'tension'
-  if (seqPhase === 'tension' && t < 8) seqPhase = 'flow'
+  // Gate phases by time
+  if (seqPhase === 'gauntlet' && t < 75) seqPhase = 'burst'
+  if (seqPhase === 'zigzag'   && t < 45) seqPhase = 'burst'
+  if (seqPhase === 'burst'    && t < 20) seqPhase = 'tension'
+  if (seqPhase === 'tension'  && t < 8)  seqPhase = 'flow'
 
-  // Phase parameters: rows + spacing multiplier
+  // ── Phase parameters — all scale with time ──────────────────────
+  const extraRows  = Math.floor(ts * 3)   // up to 3 extra rows in late game
+  const tighter    = ts * 0.12            // up to 12% tighter spacing
+
   switch(seqPhase) {
     case 'breath':
-      seqRowsLeft  = 2 + Math.floor(Math.random()*2)   // 2–3 clear rows
-      seqSpaceMult = 2.0 + Math.random()*0.6            // wide gaps
+      // Breath gets shorter as game progresses — less recovery time
+      seqRowsLeft  = Math.max(1, 2 - Math.floor(ts * 1.5))
+      seqSpaceMult = 1.8 + Math.random() * 0.5
       break
     case 'flow':
-      seqRowsLeft  = 4 + Math.floor(Math.random()*4)   // 4–7 rows, moderate
-      seqSpaceMult = 0.90 + Math.random()*0.25
+      seqRowsLeft  = 4 + Math.floor(Math.random() * 4) + Math.floor(extraRows * 0.5)
+      seqSpaceMult = 0.90 - tighter * 0.5 + Math.random() * 0.22
       break
     case 'tension':
-      seqRowsLeft  = 3 + Math.floor(Math.random()*4)   // 3–6 rows, tighter
-      seqSpaceMult = 0.68 + Math.random()*0.20
+      seqRowsLeft  = 3 + Math.floor(Math.random() * 4) + extraRows
+      seqSpaceMult = 0.68 - tighter + Math.random() * 0.16
       break
     case 'burst':
-      seqRowsLeft  = 2 + Math.floor(Math.random()*3)   // 2–4 rapid rows
-      seqSpaceMult = 0.45 + Math.random()*0.18          // very tight
+      seqRowsLeft  = 2 + Math.floor(Math.random() * 3) + extraRows
+      seqSpaceMult = 0.44 - tighter * 0.8 + Math.random() * 0.14
+      break
+    case 'zigzag':
+      // Fixed script length — always the full zigzag sequence
+      seqRowsLeft  = ZIGZAG_SCRIPT.length
+      seqSpaceMult = 0.52 - tighter * 0.6 + Math.random() * 0.10
+      break
+    case 'gauntlet':
+      seqRowsLeft  = GAUNTLET_SCRIPT.length
+      seqSpaceMult = 0.62 - tighter * 0.5 + Math.random() * 0.12
       break
   }
 }
 
 function pickPatternForPhase(react) {
+  // Scripted phases use fixed scripts regardless of RNG
+  if (seqPhase === 'zigzag') {
+    const idx = Math.min(seqStep, ZIGZAG_SCRIPT.length - 1)
+    return PLIB.double[ZIGZAG_SCRIPT[idx]]
+  }
+  if (seqPhase === 'gauntlet') {
+    const idx = Math.min(seqStep, GAUNTLET_SCRIPT.length - 1)
+    return PLIB.double[GAUNTLET_SCRIPT[idx]]
+  }
+
   const r = Math.random()
   let pool
   switch(seqPhase) {
     case 'intro':
-    case 'breath':
-      pool = PLIB.clear                                              // all clear
-      break
-    case 'flow':
-      pool = r < 0.14 ? PLIB.clear : (r < 0.42 ? PLIB.double : PLIB.single)
-      break
-    case 'tension':
-      pool = r < 0.06 ? PLIB.single : PLIB.double                   // mostly doubles
-      break
-    case 'burst':
-      pool = r < 0.30 ? PLIB.single : PLIB.double                   // doubles + singles alternating
-      break
-    default: pool = PLIB.single
+    case 'breath':  pool = PLIB.clear;  break
+    case 'flow':    pool = r < 0.12 ? PLIB.clear : (r < 0.38 ? PLIB.double : PLIB.single); break
+    case 'tension': pool = r < 0.05 ? PLIB.single : PLIB.double; break
+    case 'burst':   pool = r < 0.22 ? PLIB.single : PLIB.double; break
+    default:        pool = PLIB.single
   }
-  // Reachability filter
-  const shuffled = pool.slice().sort(() => Math.random()-0.5)
+
+  // Reachability filter — always pick a reachable pattern
+  const shuffled = pool.slice().sort(() => Math.random() - 0.5)
   let chosen = shuffled[0]
   for (const c of shuffled) {
     if (isReachable(lastOpenX, openXofPattern(c), react)) { chosen = c; break }
@@ -1250,6 +1287,7 @@ function spawnObstacles() {
   const chosen = pickPatternForPhase(seqBaseReact * seqSpaceMult)
   lastOpenX = openXofPattern(chosen)
   seqRowsLeft--
+  seqStep++   // advance script position for zigzag/gauntlet
 
   if (chosen.every(b => !b)) return   // clear row — no obstacles to push
 
@@ -1365,6 +1403,7 @@ function startGame() {
   seqRowsLeft  = 3
   seqSpaceMult = 1.8
   seqBaseReact = 2.0
+  seqStep      = 0
   state = 'countdown'
   game.countdownVal = 3
   game.countdownTimer = 0
