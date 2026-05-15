@@ -306,78 +306,125 @@ function carScreenPos() {
 // ─── Sky & Background ─────────────────────────────────────────────────────────
 function drawSky() {
   const hy = getHorizonY()
+
+  // Deep space gradient — very dark top, atmospheric purple near horizon
   const sg = ctx.createLinearGradient(0, 0, 0, hy)
-  sg.addColorStop(0, '#020008')
-  sg.addColorStop(0.5, '#0D0028')
-  sg.addColorStop(1, '#1A0040')
+  sg.addColorStop(0,   '#010006')
+  sg.addColorStop(0.6, '#080018')
+  sg.addColorStop(1,   '#120030')
   ctx.fillStyle = sg; ctx.fillRect(0, 0, W, hy)
 
-  const starOff = (game.cameraZ * 0.04) % W  // slower star parallax
-  for (let i = 0; i < 40; i++) {   // fewer stars, less visual noise
-    const sx = ((i*1483+37) % W + starOff) % W
-    const sy = (i*937+11) % hy
-    const sa = 0.18 + Math.sin(game.time*0.4 + i*0.8)*0.08  // dim, slow twinkle
-    ctx.fillStyle = `rgba(220,180,255,${sa})`
-    ctx.beginPath(); ctx.arc(sx, sy, i%7===0?1.4:0.7, 0, Math.PI*2); ctx.fill()
+  // Stars — minimal, static-feeling, no distracting twinkle
+  for (let i = 0; i < 32; i++) {
+    const sx = (i * 1483 + 37) % W
+    const sy = (i * 937  + 11) % (hy * 0.85)
+    const sa = 0.10 + (i % 3 === 0 ? 0.12 : 0.04)
+    ctx.fillStyle = `rgba(200,170,255,${sa})`
+    ctx.beginPath(); ctx.arc(sx, sy, i%9===0 ? 1.2 : 0.6, 0, Math.PI*2); ctx.fill()
   }
 
-  // Horizon glow line — subtle purple bloom at horizon
-  const hgr = ctx.createLinearGradient(0, hy-18, 0, hy+12)
-  hgr.addColorStop(0, 'rgba(100,0,180,0)')
-  hgr.addColorStop(0.5, 'rgba(120,0,200,0.12)')
-  hgr.addColorStop(1, 'rgba(80,0,140,0)')
-  ctx.fillStyle = hgr; ctx.fillRect(0, hy-18, W, 30)
-  ctx.shadowBlur = 0
+  // Wide atmospheric glow at horizon — TRON-style horizon bloom
+  const hg1 = ctx.createLinearGradient(0, hy - 50, 0, hy + 20)
+  hg1.addColorStop(0,   'rgba(80,0,160,0)')
+  hg1.addColorStop(0.4, 'rgba(160,0,255,0.14)')
+  hg1.addColorStop(0.7, 'rgba(200,0,255,0.08)')
+  hg1.addColorStop(1,   'rgba(80,0,120,0)')
+  ctx.fillStyle = hg1; ctx.fillRect(0, hy - 50, W, 70)
+
+  // Subtle horizontal lens-flare line at horizon
+  ctx.strokeStyle = 'rgba(180,80,255,0.18)'
+  ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke()
 }
 
 // ─── Road ────────────────────────────────────────────────────────────────────
 function drawRoad() {
-  const hy = getHorizonY()
-  const nearS = segScreen(NUM_SEGS-1)
+  const hy    = getHorizonY()
+  const nearS = segScreen(NUM_SEGS - 1)
   const farS  = segScreen(0)
 
+  // ── Road surface — dark tarmac with depth ──────────────────────
   const rg = ctx.createLinearGradient(0, hy, 0, H)
-  const speedTint = Math.min(1,(game.speedMult-1)/5)
-  rg.addColorStop(0,'#08001A')
-  rg.addColorStop(0.4,`rgba(${Math.floor(8+speedTint*20)},0,${Math.floor(20+speedTint*5)},1)`)
-  rg.addColorStop(1,'#0F0028')
-  ctx.fillStyle=rg
+  rg.addColorStop(0,   '#06000F')   // nearly black at horizon (receding depth)
+  rg.addColorStop(0.3, '#09001A')
+  rg.addColorStop(0.7, '#0C001E')
+  rg.addColorStop(1,   '#0E0022')   // slightly brighter near camera
+  ctx.fillStyle = rg
   ctx.beginPath()
-  ctx.moveTo(W/2-farS.halfW,  farS.y)
-  ctx.lineTo(W/2+farS.halfW,  farS.y)
-  ctx.lineTo(W/2+nearS.halfW, nearS.y)
-  ctx.lineTo(W/2-nearS.halfW, nearS.y)
+  ctx.moveTo(W/2 - farS.halfW,  farS.y)
+  ctx.lineTo(W/2 + farS.halfW,  farS.y)
+  ctx.lineTo(W/2 + nearS.halfW, nearS.y)
+  ctx.lineTo(W/2 - nearS.halfW, nearS.y)
   ctx.closePath(); ctx.fill()
 
-  ctx.shadowColor='#FF00FF'; ctx.shadowBlur=12
-  ctx.strokeStyle='#FF00FF'; ctx.lineWidth=2
-  ctx.beginPath(); ctx.moveTo(W/2-nearS.halfW, nearS.y); ctx.lineTo(W/2-farS.halfW*0.05, farS.y); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(W/2+nearS.halfW, nearS.y); ctx.lineTo(W/2+farS.halfW*0.05, farS.y); ctx.stroke()
-  ctx.shadowBlur=0
+  // ── Atmospheric fog at horizon — road fades into distance ───────
+  const fog = ctx.createLinearGradient(0, hy, 0, hy + (nearS.y - hy) * 0.35)
+  fog.addColorStop(0, 'rgba(20,0,50,0.55)')
+  fog.addColorStop(1, 'rgba(20,0,50,0)')
+  ctx.fillStyle = fog
+  ctx.beginPath()
+  ctx.moveTo(W/2 - farS.halfW, farS.y)
+  ctx.lineTo(W/2 + farS.halfW, farS.y)
+  ctx.lineTo(W/2 + nearS.halfW * 0.6, hy + (nearS.y - hy) * 0.35)
+  ctx.lineTo(W/2 - nearS.halfW * 0.6, hy + (nearS.y - hy) * 0.35)
+  ctx.closePath(); ctx.fill()
 
-  const firstGrid = Math.ceil(game.cameraZ/GRID_STEP)*GRID_STEP
-  for (let n=0; n<16; n++) {
-    const wz  = firstGrid + n*GRID_STEP
+  // ── Road edges — magenta neon, elegant ─────────────────────────
+  ctx.shadowColor = '#FF00FF'; ctx.shadowBlur = 8
+  ctx.strokeStyle = '#DD00DD'; ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.moveTo(W/2 - nearS.halfW, nearS.y); ctx.lineTo(W/2 - farS.halfW * 0.04, farS.y); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(W/2 + nearS.halfW, nearS.y); ctx.lineTo(W/2 + farS.halfW * 0.04, farS.y); ctx.stroke()
+  ctx.shadowBlur = 0
+
+  // ── World-space horizontal grid — subtle, depth-fading ──────────
+  const firstGrid = Math.ceil(game.cameraZ / GRID_STEP) * GRID_STEP
+  for (let n = 0; n < 16; n++) {
+    const wz  = firstGrid + n * GRID_STEP
     const rel = wz - game.cameraZ
-    if (rel<=0 || rel>=NUM_SEGS) continue
-    const lo = Math.floor(rel), hi = Math.min(lo+1, NUM_SEGS-1)
-    const fr = rel-lo
-    const sL = segScreen(NUM_SEGS-1-lo), sH = segScreen(NUM_SEGS-1-hi)
-    const sy = sL.y*(1-fr)+sH.y*fr
-    const hw = sL.halfW*(1-fr)+sH.halfW*fr
-    const a  = (1-rel/NUM_SEGS)*0.55
-    ctx.strokeStyle = n%2===0?`rgba(153,0,255,${a})`:`rgba(204,0,255,${a})`
-    ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(W/2-hw,sy); ctx.lineTo(W/2+hw,sy); ctx.stroke()
+    if (rel <= 0 || rel >= NUM_SEGS) continue
+    const lo = Math.floor(rel), hi = Math.min(lo + 1, NUM_SEGS - 1)
+    const fr = rel - lo
+    const sL = segScreen(NUM_SEGS - 1 - lo), sH = segScreen(NUM_SEGS - 1 - hi)
+    const sy  = sL.y * (1 - fr) + sH.y * fr
+    const hw  = sL.halfW * (1 - fr) + sH.halfW * fr
+    const a   = Math.pow(1 - rel / NUM_SEGS, 1.8) * 0.40  // sharper falloff
+    ctx.strokeStyle = `rgba(100,0,200,${a})`
+    ctx.lineWidth = 0.75
+    ctx.beginPath(); ctx.moveTo(W/2 - hw, sy); ctx.lineTo(W/2 + hw, sy); ctx.stroke()
   }
 
-  ctx.setLineDash([8,12])
-  ctx.strokeStyle='rgba(80,0,160,0.35)'; ctx.lineWidth=1
-  for (let l=0; l<2; l++) {
-    const lx0 = W/2 + LANES[l*2]*nearS.halfW/ROAD_HW
-    const lx1 = W/2 + LANES[l*2]*farS.halfW/ROAD_HW*0.1
-    ctx.beginPath(); ctx.moveTo(lx0,nearS.y); ctx.lineTo(lx1,farS.y); ctx.stroke()
+  // ── World-space scrolling center dashes — lane marker ───────────
+  const DASH_STEP = GRID_STEP / 2
+  const firstDash = Math.ceil(game.cameraZ / DASH_STEP) * DASH_STEP
+  for (let n = 0; n < 24; n++) {
+    const wz  = firstDash + n * DASH_STEP
+    const rel = wz - game.cameraZ
+    if (rel <= 0 || rel >= NUM_SEGS - 2) continue
+    if (Math.floor((wz / DASH_STEP)) % 2 === 0) continue  // skip every other = dashes
+    const lo = Math.floor(rel)
+    const s  = segScreen(NUM_SEGS - 1 - lo)
+    const a  = Math.pow(1 - rel / NUM_SEGS, 2.0) * 0.55
+    ctx.strokeStyle = `rgba(160,80,255,${a})`
+    ctx.lineWidth = 0.8
+    ctx.beginPath(); ctx.moveTo(W/2, s.y); ctx.lineTo(W/2, s.y + 3); ctx.stroke()
   }
-  ctx.setLineDash([])
+
+  // ── Lane dividers at LANES[0] and LANES[2] ──────────────────────
+  ctx.strokeStyle = 'rgba(70,0,140,0.22)'; ctx.lineWidth = 0.75
+  for (let l = 0; l < 2; l++) {
+    const lx0 = W/2 + LANES[l * 2] * nearS.halfW / ROAD_HW
+    const lx1 = W/2 + LANES[l * 2] * farS.halfW  / ROAD_HW * 0.08
+    ctx.beginPath(); ctx.moveTo(lx0, nearS.y); ctx.lineTo(lx1, farS.y); ctx.stroke()
+  }
+
+  // ── Near-camera road glow — car's headlights on road ────────────
+  const carCP = carScreenPos()
+  const nrgGrad = ctx.createRadialGradient(W/2, nearS.y, 0, W/2, nearS.y, nearS.halfW * 1.8)
+  nrgGrad.addColorStop(0,   'rgba(0,200,255,0.06)')
+  nrgGrad.addColorStop(0.5, 'rgba(0,100,180,0.03)')
+  nrgGrad.addColorStop(1,   'rgba(0,0,0,0)')
+  ctx.fillStyle = nrgGrad
+  ctx.fillRect(W/2 - nearS.halfW * 1.8, carCP.y - 30, nearS.halfW * 3.6, H - carCP.y + 40)
 }
 
 // ─── Buildings ────────────────────────────────────────────────────────────────
@@ -506,52 +553,95 @@ function projectObstacle(o) {
 
 function drawObstacle(o) {
   const p = projectObstacle(o)
-  if (!p || p.s.t<0.02) return
+  if (!p || p.s.t < 0.02) return
   const col   = OCOL[o.type] || OCOL.block
-  // No distance fade — full visibility at all times
-  const alpha = o.type==='ghost' ? 0.60 : 1.0
-  const pulse = 0.97+0.03*Math.sin(game.time*2.5+o.wz*0.5)  // subtle, slow pulse
+  const alpha = o.type === 'ghost' ? 0.48 : 1.0
+  const {x, y, w, h} = p
+  const t = game.time
 
   ctx.save()
-  ctx.globalAlpha = alpha*pulse
-  ctx.shadowColor = col.s; ctx.shadowBlur = 16   // readable glow, not overwhelming
-  ctx.lineWidth   = 2.5
+  ctx.globalAlpha = alpha
 
-  const topH=p.h*0.35, shr=0.80
-  const fL=p.x, fR=p.x+p.w
-  const bL=p.x+p.w*(1-shr)/2, bR=p.x+p.w-(p.w*(1-shr)/2)
-  const fY=p.y, bY=p.y-topH
-  ctx.fillStyle=col.top; ctx.strokeStyle=col.s
-  ctx.beginPath()
-  ctx.moveTo(fL,fY); ctx.lineTo(fR,fY); ctx.lineTo(bR,bY); ctx.lineTo(bL,bY)
-  ctx.closePath(); ctx.fill(); ctx.stroke()
+  // ── Interior fill — very transparent, holographic feel ──────────
+  const interiorAlpha = o.type === 'ghost' ? 0.06 : 0.10
+  ctx.fillStyle = col.f.replace(/[\d.]+\)$/, `${interiorAlpha})`)
+  ctx.fillRect(x, y, w, h)
 
-  if (o.type==='rotating') {
-    ctx.translate(p.x+p.w/2, p.y+p.h/2); ctx.rotate(o.angle)
-    ctx.fillStyle=col.f; ctx.strokeStyle=col.s
-    ctx.strokeRect(-p.w/2,-p.h/2,p.w,p.h); ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h)
-  } else if (o.type==='ghost') {
-    ctx.setLineDash([5,4]); ctx.fillStyle=col.f; ctx.strokeStyle=col.s
-    ctx.strokeRect(p.x,p.y,p.w,p.h); ctx.fillRect(p.x,p.y,p.w,p.h)
-    ctx.setLineDash([])
-  } else {
-    ctx.fillStyle=col.f; ctx.strokeStyle=col.s
-    ctx.strokeRect(p.x,p.y,p.w,p.h); ctx.fillRect(p.x,p.y,p.w,p.h)
-    if (p.w>12) {
-      ctx.globalAlpha=alpha*0.35; ctx.lineWidth=1
-      for (let s2=0;s2<5;s2++) {
-        const tx=p.x+(p.w/5)*s2
-        ctx.beginPath(); ctx.moveTo(tx,p.y); ctx.lineTo(tx+p.w/5,p.y+p.h); ctx.stroke()
-      }
-    }
+  // ── Animated scan lines (horizontal, downward sweep) ────────────
+  const scanSpacing = Math.max(5, h * 0.14)
+  const scanOff     = (t * 55 + o.wz * 1.5) % scanSpacing
+  ctx.globalAlpha   = alpha * (o.type === 'ghost' ? 0.12 : 0.18)
+  ctx.strokeStyle   = col.s; ctx.lineWidth = 0.7
+  for (let sy = y + scanOff - scanSpacing; sy < y + h; sy += scanSpacing) {
+    if (sy < y || sy > y + h) continue
+    ctx.beginPath(); ctx.moveTo(x, sy); ctx.lineTo(x + w, sy); ctx.stroke()
   }
-  // Bright edge highlights for depth
-  ctx.globalAlpha=alpha*0.6; ctx.lineWidth=1.5; ctx.strokeStyle=col.hi; ctx.shadowBlur=8
-  ctx.beginPath(); ctx.moveTo(bL,bY); ctx.lineTo(p.x,p.y); ctx.lineTo(p.x,p.y+p.h); ctx.stroke()
-  ctx.beginPath(); ctx.moveTo(bR,bY); ctx.lineTo(p.x+p.w,p.y); ctx.lineTo(p.x+p.w,p.y+p.h); ctx.stroke()
-  // Top highlight line (brightest edge)
-  ctx.globalAlpha=alpha*0.9; ctx.lineWidth=2; ctx.strokeStyle=col.hi; ctx.shadowBlur=14
-  ctx.beginPath(); ctx.moveTo(bL,bY); ctx.lineTo(bR,bY); ctx.stroke()
+
+  // ── Left energy pillar ──────────────────────────────────────────
+  ctx.globalAlpha   = alpha
+  ctx.shadowColor   = col.s; ctx.shadowBlur = 10
+  ctx.strokeStyle   = col.s; ctx.lineWidth  = Math.max(1.5, p.s.t * 3)
+  ctx.beginPath(); ctx.moveTo(x + 1, y); ctx.lineTo(x + 1, y + h); ctx.stroke()
+
+  // ── Right energy pillar ─────────────────────────────────────────
+  ctx.beginPath(); ctx.moveTo(x + w - 1, y); ctx.lineTo(x + w - 1, y + h); ctx.stroke()
+
+  // ── Top energy beam — brightest, primary read element ──────────
+  ctx.shadowBlur  = 18; ctx.lineWidth = Math.max(2, p.s.t * 3.5)
+  ctx.strokeStyle = col.hi
+  ctx.beginPath(); ctx.moveTo(x - 1, y); ctx.lineTo(x + w + 1, y); ctx.stroke()
+
+  // ── Ground bar — connects to road surface ──────────────────────
+  ctx.shadowBlur  = 5; ctx.lineWidth = 1.5; ctx.strokeStyle = col.s
+  ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke()
+
+  // ── Type-specific visual variations ────────────────────────────
+  if (o.type === 'rotating') {
+    // Spinning X pattern inside
+    ctx.save()
+    ctx.translate(x + w/2, y + h/2); ctx.rotate(o.angle)
+    ctx.globalAlpha = alpha * 0.55; ctx.strokeStyle = col.hi; ctx.lineWidth = 1.5; ctx.shadowBlur = 6
+    ctx.beginPath(); ctx.moveTo(-w*0.4, -h*0.4); ctx.lineTo(w*0.4, h*0.4); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(w*0.4, -h*0.4); ctx.lineTo(-w*0.4, h*0.4); ctx.stroke()
+    ctx.restore()
+  } else if (o.type === 'ghost') {
+    // Dashed outline — hard to fully read
+    ctx.globalAlpha = alpha * 0.7
+    ctx.setLineDash([4, 6])
+    ctx.strokeStyle = col.hi; ctx.lineWidth = 1; ctx.shadowBlur = 4
+    ctx.strokeRect(x + 2, y + 2, w - 4, h - 4)
+    ctx.setLineDash([])
+  } else if (o.type === 'moving') {
+    // Horizontal speed arrows inside
+    ctx.globalAlpha = alpha * 0.4; ctx.strokeStyle = col.hi; ctx.lineWidth = 1; ctx.shadowBlur = 4
+    const arrY = y + h * 0.5
+    ctx.beginPath(); ctx.moveTo(x + w*0.2, arrY); ctx.lineTo(x + w*0.8, arrY); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(x + w*0.6, arrY - h*0.18); ctx.lineTo(x + w*0.8, arrY); ctx.lineTo(x + w*0.6, arrY + h*0.18); ctx.stroke()
+  } else if (o.type === 'shrinking') {
+    // Inward-pointing triangles showing it's shrinking
+    ctx.globalAlpha = alpha * 0.35; ctx.strokeStyle = col.hi; ctx.lineWidth = 1; ctx.shadowBlur = 4
+    ctx.beginPath()
+    ctx.moveTo(x + 2, y + 2); ctx.lineTo(x + w*0.3, y + h*0.5); ctx.lineTo(x + 2, y + h - 2); ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x + w - 2, y + 2); ctx.lineTo(x + w*0.7, y + h*0.5); ctx.lineTo(x + w - 2, y + h - 2); ctx.stroke()
+  }
+
+  // ── Pulsing danger warning at center ───────────────────────────
+  const warn = 0.3 + 0.25 * Math.abs(Math.sin(t * 2.8 + o.wz * 0.3))
+  ctx.globalAlpha = alpha * warn
+  ctx.strokeStyle = col.hi; ctx.lineWidth = 1; ctx.shadowBlur = 10
+  ctx.beginPath(); ctx.moveTo(x + w/2, y + h*0.12); ctx.lineTo(x + w/2, y + h*0.88); ctx.stroke()
+
+  // ── 3D top face — gives depth without being a box ──────────────
+  const topH = h * 0.18, shr = 0.82
+  const bL   = x + w*(1-shr)/2, bR = x + w - w*(1-shr)/2
+  ctx.globalAlpha = alpha * 0.5; ctx.shadowBlur = 6
+  ctx.strokeStyle = col.hi; ctx.lineWidth = 1.2
+  ctx.beginPath(); ctx.moveTo(bL, y - topH); ctx.lineTo(bR, y - topH); ctx.stroke()
+  ctx.globalAlpha = alpha * 0.3; ctx.lineWidth = 0.8; ctx.strokeStyle = col.s
+  ctx.beginPath(); ctx.moveTo(bL, y - topH); ctx.lineTo(x, y); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(bR, y - topH); ctx.lineTo(x + w, y); ctx.stroke()
+
   ctx.restore()
 }
 
@@ -784,29 +874,57 @@ function getSkinColor() {
 function drawCar() {
   const cp   = carScreenPos()
   const px   = cp.x, py = cp.y
-  const cw   = cp.halfW*0.30
-  const ch   = cp.halfW*0.22
+  const cw   = cp.halfW * 0.36   // larger presence
+  const ch   = cp.halfW * 0.26
   const TRIM = getSkinColor()
-  const CAR  = '#0A0018'
-  const roll = game.playerVX * -0.10
+  const CAR  = '#080015'
+  const roll = game.playerVX * -0.08   // subtle body roll
 
+  // ── Hover shadow on road surface ────────────────────────────────
+  const nearS  = segScreen(NUM_SEGS - 1)
+  const shadowY = nearS.y - 4
+  const shd = ctx.createRadialGradient(px, shadowY, 0, px, shadowY, cw * 3.2)
+  shd.addColorStop(0, 'rgba(0,200,255,0.16)')
+  shd.addColorStop(0.4,'rgba(0,100,200,0.08)')
+  shd.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = shd
+  ctx.beginPath(); ctx.ellipse(px, shadowY, cw * 3.2, cw * 0.5, 0, 0, Math.PI * 2); ctx.fill()
+
+  // ── Headlight beams — forward-pointing glow cones ───────────────
+  const beamY = py - ch * 1.8    // beams reach toward horizon
   ctx.save()
-  ctx.translate(px,py); ctx.rotate(roll); ctx.translate(-px,-py)
-
-  const ug = ctx.createRadialGradient(px,py,0,px,py,cw*2.5)
-  ug.addColorStop(0,'rgba(180,0,255,0.22)'); ug.addColorStop(1,'rgba(0,0,0,0)')
-  ctx.fillStyle=ug; ctx.fillRect(px-cw*2.5,py-ch,cw*5,ch*1.5)
-
-  ctx.shadowColor=TRIM; ctx.shadowBlur=22
-  drawCarModel(px,py,cw,ch,CAR,TRIM,save.activeCar||'sedan')
+  ctx.globalAlpha = 0.055
+  const lb = ctx.createLinearGradient(px - cw * 0.6, py - ch, px - cw * 0.6, beamY)
+  lb.addColorStop(0, 'rgba(150,220,255,1)')
+  lb.addColorStop(1, 'rgba(150,220,255,0)')
+  ctx.fillStyle = lb
+  ctx.beginPath()
+  ctx.moveTo(px - cw * 0.7, py - ch)
+  ctx.lineTo(px - cw * 2.2, beamY)
+  ctx.lineTo(px,            beamY)
+  ctx.closePath(); ctx.fill()
+  ctx.beginPath()
+  ctx.moveTo(px + cw * 0.7, py - ch)
+  ctx.lineTo(px + cw * 2.2, beamY)
+  ctx.lineTo(px,            beamY)
+  ctx.closePath(); ctx.fill()
   ctx.restore()
 
+  // ── Car body ─────────────────────────────────────────────────────
+  ctx.save()
+  ctx.translate(px, py); ctx.rotate(roll); ctx.translate(-px, -py)
+  ctx.shadowColor = TRIM; ctx.shadowBlur = 18
+  drawCarModel(px, py, cw, ch, CAR, TRIM, save.activeCar || 'sedan')
+  ctx.restore()
+
+  // ── Exhaust particles ─────────────────────────────────────────────
   if (save.settings.particles && !game.dead) {
-    const exhaustCol = game.bonusSpeed>0 ? '#FF4400' : TRIM
-    emit(px, py+ch*0.05, exhaustCol, 1, {angle:Math.PI/2, spread:0.6, speed:15+Math.random()*25, life:0.25, r:2+Math.random()*3, gravity:-10, vy:20})
-    if (game.speedMult>2.5) {
-      emit(px-cw*0.5, py+ch*0.05, '#FF6600', 1, {angle:Math.PI*0.6, spread:0.4, speed:20, life:0.2, r:3, gravity:0})
-      emit(px+cw*0.5, py+ch*0.05, '#FF6600', 1, {angle:Math.PI*0.4, spread:0.4, speed:20, life:0.2, r:3, gravity:0})
+    const exhaustCol = game.bonusSpeed > 0 ? '#FF4400' : TRIM
+    emit(px, py + ch * 0.08, exhaustCol, 1,
+      {angle: Math.PI/2, spread:0.5, speed:12+Math.random()*20, life:0.22, r:2+Math.random()*2.5, gravity:-8, vy:18})
+    if (game.speedMult > 3.0) {
+      emit(px - cw * 0.4, py + ch * 0.06, '#FF5500', 1, {angle:Math.PI*0.58, spread:0.35, speed:18, life:0.18, r:2.5, gravity:0})
+      emit(px + cw * 0.4, py + ch * 0.06, '#FF5500', 1, {angle:Math.PI*0.42, spread:0.35, speed:18, life:0.18, r:2.5, gravity:0})
     }
   }
 }
@@ -842,10 +960,17 @@ function drawChromaticAberration() {
 }
 
 function drawVignette() {
-  const vg=ctx.createRadialGradient(W/2,H/2,H*0.3,W/2,H/2,H*0.85)
-  vg.addColorStop(0,'rgba(0,0,0,0)')
-  vg.addColorStop(1,'rgba(0,0,10,0.75)')
-  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H)
+  // Radial — focus on road center
+  const vg = ctx.createRadialGradient(W/2, H*0.55, H*0.22, W/2, H*0.55, H*0.82)
+  vg.addColorStop(0,   'rgba(0,0,0,0)')
+  vg.addColorStop(0.6, 'rgba(0,0,8,0.12)')
+  vg.addColorStop(1,   'rgba(0,0,12,0.80)')
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H)
+  // Top bar — pushes attention down to road
+  const top = ctx.createLinearGradient(0, 0, 0, H * 0.20)
+  top.addColorStop(0, 'rgba(0,0,6,0.52)')
+  top.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = top; ctx.fillRect(0, 0, W, H * 0.20)
 }
 
 function applyFlash() {
