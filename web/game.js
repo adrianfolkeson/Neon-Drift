@@ -996,43 +996,115 @@ const PLIB = {
 }
 
 // Track the "open zone center X" of last spawn to enforce reachability
-let lastOpenX   = LANES[1]   // start center
-let burstCount  = 0           // how many consecutive hard patterns
+// ── Sequence state machine ──────────────────────────────────────────────────
+// Phases: 'intro' | 'breath' | 'flow' | 'tension' | 'burst'
+// Each phase runs for seqRowsLeft rows then transitions to next phase.
+// Spacing multiplier controls density within the phase.
+
+let lastOpenX    = LANES[1]
+let seqPhase     = 'intro'
+let seqRowsLeft  = 3
+let seqSpaceMult = 1.8    // spacing as fraction of base reaction time
+let seqBaseReact = 2.0    // reaction seconds at current phase start
 
 function pickObstacleType(t, spd) {
   const r = Math.random()
   let type = 'block'
   if      (t > 30 && r < 0.18) type = 'moving'
   else if (t > 50 && r < 0.22) type = 'shrinking'
-  else if (t > 65 && r < 0.28) type = 'rotating'
-  else if (t > 80 && r < 0.32) type = 'ghost'
+  else if (t > 65 && r < 0.26) type = 'rotating'
+  else if (t > 80 && r < 0.30) type = 'ghost'
   if (spd > 4.5 && (type === 'moving' || type === 'rotating')) type = 'block'
   return type
 }
 
 function openXofPattern(pat) {
   const open = [0,1,2].filter(i => !pat[i])
-  return open.reduce((s, i) => s + LANES[i], 0) / open.length
+  return open.reduce((s,i) => s + LANES[i], 0) / open.length
 }
 
-function isReachable(fromX, toX, reactionSecs) {
-  // Player can move MOVE_SPEED world-units per second
-  return Math.abs(toX - fromX) <= 1.8 * reactionSecs + 0.15
+function isReachable(fromX, toX, secs) {
+  return Math.abs(toX - fromX) <= 1.8 * secs + 0.15
+}
+
+function nextSequence(t) {
+  const r  = Math.random()
+  const prev = seqPhase
+
+  // Global reaction window floor
+  const react = t < 10 ? 2.2
+              : t < 30 ? 1.9
+              : t < 70 ? 1.55
+              : Math.max(0.88, 1.55 - (t-70)*0.005)
+  seqBaseReact = react
+
+  // Transition table: prev phase → next phase weights
+  if (prev === 'intro' || prev === 'breath') {
+    seqPhase    = r < 0.55 ? 'flow' : (r < 0.85 ? 'tension' : 'burst')
+  } else if (prev === 'burst') {
+    seqPhase    = r < 0.70 ? 'breath' : 'flow'   // always give relief after burst
+  } else if (prev === 'flow') {
+    seqPhase    = r < 0.18 ? 'breath' : (r < 0.52 ? 'flow' : (r < 0.82 ? 'tension' : 'burst'))
+  } else { // tension
+    seqPhase    = r < 0.22 ? 'breath' : (r < 0.48 ? 'flow' : (r < 0.78 ? 'tension' : 'burst'))
+  }
+
+  // Burst requires some game time to unlock
+  if (seqPhase === 'burst' && t < 20) seqPhase = 'tension'
+  if (seqPhase === 'tension' && t < 8) seqPhase = 'flow'
+
+  // Phase parameters: rows + spacing multiplier
+  switch(seqPhase) {
+    case 'breath':
+      seqRowsLeft  = 2 + Math.floor(Math.random()*2)   // 2–3 clear rows
+      seqSpaceMult = 2.0 + Math.random()*0.6            // wide gaps
+      break
+    case 'flow':
+      seqRowsLeft  = 4 + Math.floor(Math.random()*4)   // 4–7 rows, moderate
+      seqSpaceMult = 0.90 + Math.random()*0.25
+      break
+    case 'tension':
+      seqRowsLeft  = 3 + Math.floor(Math.random()*4)   // 3–6 rows, tighter
+      seqSpaceMult = 0.68 + Math.random()*0.20
+      break
+    case 'burst':
+      seqRowsLeft  = 2 + Math.floor(Math.random()*3)   // 2–4 rapid rows
+      seqSpaceMult = 0.45 + Math.random()*0.18          // very tight
+      break
+  }
+}
+
+function pickPatternForPhase(react) {
+  const r = Math.random()
+  let pool
+  switch(seqPhase) {
+    case 'intro':
+    case 'breath':
+      pool = PLIB.clear                                              // all clear
+      break
+    case 'flow':
+      pool = r < 0.14 ? PLIB.clear : (r < 0.42 ? PLIB.double : PLIB.single)
+      break
+    case 'tension':
+      pool = r < 0.06 ? PLIB.single : PLIB.double                   // mostly doubles
+      break
+    case 'burst':
+      pool = r < 0.30 ? PLIB.single : PLIB.double                   // doubles + singles alternating
+      break
+    default: pool = PLIB.single
+  }
+  // Reachability filter
+  const shuffled = pool.slice().sort(() => Math.random()-0.5)
+  let chosen = shuffled[0]
+  for (const c of shuffled) {
+    if (isReachable(lastOpenX, openXofPattern(c), react)) { chosen = c; break }
+  }
+  return chosen
 }
 
 function spawnObstacles() {
   const t   = game.time
   const spd = game.speedMult
-
-  // Base reaction window — starts tighter, min 0.90s
-  const baseReact = t < 10  ? 2.4
-                  : t < 30  ? 2.0
-                  : t < 70  ? 1.6
-                  : Math.max(0.90, 1.6 - (t - 70) * 0.005)
-
-  // Add random spacing variation: ±30% for rhythm unpredictability
-  const reactVariance = baseReact * (0.7 + Math.random() * 0.6)
-  const spacing = reactVariance * (15 * spd)
 
   const furthestZ = game.obstacles.length
     ? Math.max(...game.obstacles.map(o => o.wz))
@@ -1040,61 +1112,29 @@ function spawnObstacles() {
 
   if (furthestZ >= game.cameraZ + NUM_SEGS + 5) return
 
-  const spawnZ = Math.max(furthestZ + spacing, game.cameraZ + NUM_SEGS)
+  // Advance sequence state if needed
+  if (seqRowsLeft <= 0) nextSequence(t)
 
-  // ── Choose pattern pool based on phase ─────────────────────────
-  let pool = []
-  const rand = Math.random()
+  // Spacing = base reaction × phase multiplier × small random variance × speed
+  const spacingSecs = seqBaseReact * seqSpaceMult * (0.85 + Math.random()*0.30)
+  const spacing     = spacingSecs * (15 * spd)
+  const spawnZ      = Math.max(furthestZ + spacing, game.cameraZ + NUM_SEGS)
 
-  if (t < 4) {
-    // Very brief intro: center open, 1 block only
-    pool = [[true, false, false], [false, false, true]]
-  } else if (t < 12) {
-    // Early: mostly singles, occasional double already
-    if (rand < 0.12)      pool = PLIB.clear
-    else if (rand < 0.30) pool = PLIB.double
-    else                  pool = PLIB.single
-  } else if (t < 40) {
-    // Medium: doubles 45%, singles 40%, clear 15%
-    if (rand < 0.15)      pool = PLIB.clear
-    else if (rand < 0.55) pool = PLIB.double
-    else                  pool = PLIB.single
-  } else {
-    // Hard: doubles dominant
-    if (rand < 0.08)      pool = PLIB.clear
-    else if (rand < 0.25) pool = PLIB.single
-    else                  pool = PLIB.double
-    if (burstCount >= 3 && pool === PLIB.double) {
-      pool = rand < 0.4 ? PLIB.clear : PLIB.single
-    }
-  }
+  const chosen = pickPatternForPhase(seqBaseReact * seqSpaceMult)
+  lastOpenX = openXofPattern(chosen)
+  seqRowsLeft--
 
-  // ── Pick pattern — reachability filter ─────────────────────────
-  // Shuffle pool then pick first reachable candidate
-  const shuffled = pool.slice().sort(() => Math.random() - 0.5)
-  let chosen = shuffled[0]  // fallback
-  for (const candidate of shuffled) {
-    const cx = openXofPattern(candidate)
-    if (isReachable(lastOpenX, cx, baseReact)) { chosen = candidate; break }
-  }
+  if (chosen.every(b => !b)) return   // clear row — no obstacles to push
 
-  const openX = openXofPattern(chosen)
-  lastOpenX   = openX
-  burstCount  = (chosen === PLIB.double[0] || chosen === PLIB.double[1] || chosen === PLIB.double[2])
-                  ? burstCount + 1 : 0
-
-  // ── Pick obstacle type ─────────────────────────────────────────
   const type = pickObstacleType(t, spd)
-
-  // ── Spawn blocked lanes ────────────────────────────────────────
   for (let lane = 0; lane < 3; lane++) {
     if (!chosen[lane]) continue
     game.obstacles.push({
       wz: spawnZ, wx: LANES[lane],
       halfW: 0.27, origHalfW: 0.27,
       w: 0.54, h: 0.52,
-      type, angle: 0, shrinkT: 0, originWX: LANES[lane],
-      opacity: type === 'ghost' ? 0.50 : 1.0,
+      type, angle:0, shrinkT:0, originWX: LANES[lane],
+      opacity: type==='ghost' ? 0.50 : 1.0,
       nearMissed: false,
     })
   }
@@ -1182,8 +1222,11 @@ function finalizeScore() {
 
 function startGame() {
   initGame()
-  lastOpenX  = LANES[1]   // always start with center open
-  burstCount = 0
+  lastOpenX    = LANES[1]
+  seqPhase     = 'intro'
+  seqRowsLeft  = 3
+  seqSpaceMult = 1.8
+  seqBaseReact = 2.0
   state = 'playing'
   sfxConfirm()
   startEngine()
