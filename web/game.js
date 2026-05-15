@@ -953,26 +953,68 @@ function initGame() {
 }
 
 // ─── Spawn ────────────────────────────────────────────────────────────────────
+// Tracks last open lane so consecutive patterns are always reachable
+let lastOpenLane = 1
+
 function spawnObstacles() {
-  const t=game.time
-  const spacing=t<15?68:t<45?54:t<90?40:30
-  const furthestZ=game.obstacles.length ? Math.max(...game.obstacles.map(o=>o.wz)) : game.carZ
-  if (furthestZ < game.carZ+NUM_SEGS*0.8) {
-    const spawnZ=furthestZ+spacing
-    const openLane=Math.floor(Math.random()*3)
-    const rand=Math.random(); let type='block'
-    if (t>20&&rand<0.20) type='moving'
-    else if (t>35&&rand<0.28) type='rotating'
-    else if (t>35&&rand<0.35) type='shrinking'
-    else if (t>50&&rand<0.40) type='ghost'
-    for (let lane=0;lane<3;lane++) {
-      if (lane===openLane) continue
-      game.obstacles.push({
-        wz:spawnZ, wx:LANES[lane], halfW:0.27, origHalfW:0.27,
-        w:0.54, h:0.52, type, angle:0, shrinkT:0, originWX:LANES[lane],
-        opacity:type==='ghost'?0.35:1.0, nearMissed:false
-      })
+  const t   = game.time
+  const spd = game.speedMult
+
+  // Reaction window in real seconds — decreases with time, hard minimum 0.95s
+  const reactionSecs = t < 15  ? 3.2
+                     : t < 45  ? 2.4
+                     : t < 90  ? 1.7
+                     : Math.max(0.95, 1.7 - (t - 90) * 0.004)
+
+  // Convert to world-segments so spacing auto-scales with speed
+  const spacing = reactionSecs * (15 * spd)
+
+  const furthestZ = game.obstacles.length
+    ? Math.max(...game.obstacles.map(o => o.wz))
+    : game.carZ
+
+  if (furthestZ >= game.cameraZ + NUM_SEGS + 5) return   // already have plenty ahead
+
+  const spawnZ = Math.max(furthestZ + spacing, game.cameraZ + NUM_SEGS)
+
+  // ── Fair lane selection ─────────────────────────────────────────
+  // Open lane can only move ±1 from previous — impossible cross-2-lane jumps forbidden
+  let openLane
+  if (t < 8) {
+    openLane = 1                             // always center at start (easiest)
+  } else {
+    const roll = Math.random()
+    if (roll < 0.25) {
+      openLane = lastOpenLane               // stay same lane (25%)
+    } else {
+      const adj = []
+      if (lastOpenLane > 0) adj.push(lastOpenLane - 1)
+      if (lastOpenLane < 2) adj.push(lastOpenLane + 1)
+      openLane = adj[Math.floor(Math.random() * adj.length)]   // move one lane (75%)
     }
+  }
+  lastOpenLane = openLane
+
+  // ── Obstacle type — unlock harder types gradually ───────────────
+  const r = Math.random()
+  let type = 'block'
+  if      (t > 30 && r < 0.18) type = 'moving'
+  else if (t > 50 && r < 0.25) type = 'shrinking'
+  else if (t > 60 && r < 0.30) type = 'rotating'
+  else if (t > 75 && r < 0.34) type = 'ghost'
+  // Disable moving/rotating at very high speed — reaction time is already brutal
+  if (spd > 4.5 && (type === 'moving' || type === 'rotating')) type = 'block'
+
+  for (let lane = 0; lane < 3; lane++) {
+    if (lane === openLane) continue
+    game.obstacles.push({
+      wz: spawnZ, wx: LANES[lane],
+      halfW: 0.27, origHalfW: 0.27,
+      w: 0.54, h: 0.52,
+      type, angle: 0, shrinkT: 0, originWX: LANES[lane],
+      opacity: type === 'ghost' ? 0.50 : 1.0,
+      nearMissed: false,
+    })
   }
 }
 
@@ -1046,7 +1088,9 @@ function finalizeScore() {
 }
 
 function startGame() {
-  initGame(); state='playing'
+  initGame()
+  lastOpenLane = 1   // always start with center lane open
+  state = 'playing'
   sfxConfirm()
   startEngine()
   startMusic()
